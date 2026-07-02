@@ -1,5 +1,6 @@
 import os
 import json
+from datetime import datetime, timedelta
 
 DB_FILE = "dictionary.json"
 
@@ -36,37 +37,73 @@ def load_words():
         print(f"Не удалось прочитать базу данных: {e}")
         return []
 
-def save_word(french: str, transcription: str, russian: str) -> bool:
+def save_word(french: str, transcription: str, russian: str, examples: list = None) -> bool:
     """
-    Добавляет новое слово в базу данных JSON.
-    
-    :param french: Слово на французском языке
-    :param transcription: Транскрипция слова
-    :param russian: Перевод на русский язык
-    :return: bool - True, если сохранение прошло успешно, иначе False
+    Добавляет новое слово с базовыми параметрами интервального повторения.
     """
-    words = load_words()
-    
-    for word in words:
-        if word['french'].lower() == french.lower():
-            print(f"Слово '{french}' уже есть в словаре!")
-            return False
-
-    new_word = {
-        "french": french.strip(),
-        "transcription": transcription.strip(),
-        "russian": russian.strip()
-    }
-    
-    words.append(new_word)
-    
     try:
-        with open(DB_FILE, 'w', encoding='utf-8') as f:
+        words = load_words()
+        
+        new_card = {
+            "french": french.strip(),
+            "transcription": transcription.strip(),
+            "russian": russian.strip(),
+            "examples": examples if examples else [],
+            "interval": 1,
+            "ease_factor": 2.5,
+            "repetitions": 0,
+            "next_review": datetime.now().strftime("%Y-%m-%d")
+        }
+        
+        for word in words:
+            if word["french"].lower() == new_card["french"].lower():
+                print(f"Слово '{french}' уже есть в словаре.")
+                return False
+                
+        words.append(new_card)
+        
+        with open("dictionary.json", "w", encoding="utf-8") as f:
             json.dump(words, f, ensure_ascii=False, indent=4)
         return True
+        
     except Exception as e:
-        print(f"Ошибка при сохранении слова в базу данных: {e}")
+        print(f"Ошибка при сохранении слова: {e}")
         return False
+
+def update_card_review(word_data: dict, quality: int) -> dict:
+    """
+    Рассчитывает дату следующего повторения по алгоритму SM-2.
+    
+    quality: 
+        0 - "Забыл" (сброс)
+        1 - "Сложно"
+        2 - "Хорошо"
+        3 - "Легко"
+    """
+    if quality == 0:
+        word_data["repetitions"] = 0
+        word_data["interval"] = 1 
+        word_data["ease_factor"] = max(1.3, word_data["ease_factor"] - 0.2)
+    
+    else:
+        if word_data["repetitions"] == 0:
+            word_data["interval"] = 1
+        elif word_data["repetitions"] == 1:
+            word_data["interval"] = 3
+        else:
+            word_data["interval"] = int(word_data["interval"] * word_data["ease_factor"])
+        
+        word_data["repetitions"] += 1
+        
+        word_data["ease_factor"] += (0.1 - (3 - quality) * (0.08 + (3 - quality) * 0.02))
+        
+        if word_data["ease_factor"] < 1.3:
+            word_data["ease_factor"] = 1.3
+
+    next_date = datetime.now() + timedelta(days=word_data["interval"])
+    word_data["next_review"] = next_date.strftime("%Y-%m-%d")
+    
+    return word_data
 
 
 if __name__ == "__main__":
