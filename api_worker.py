@@ -18,7 +18,6 @@ def get_translation_mymemory(text: str, source_lang: str, target_lang: str) -> s
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            # Достаем переведенный текст из ответа API
             translated_text = data["responseData"]["translatedText"]
             return translated_text.strip().lower()
     except Exception as e:
@@ -41,17 +40,13 @@ def fetch_transcription_from_wiktionary(fr_word: str) -> str:
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Вариант 1: Ищем любой тег с классом 'API' (самый точный способ)
             api_tags = soup.find_all(class_='API')
             for tag in api_tags:
                 text = tag.text.strip()
                 if text and ('\\' in text or '/' in text or len(text) > 0):
-                    # Очищаем от косых черт, если они спарсились внутрь тега
                     clean_text = text.replace('\\', '').replace('/', '')
                     return f"[{clean_text}]"
             
-            # Вариант 2: Если тег не найден, ищем регулярным выражением текст между \...\
-            # Во французском Викисловаре транскрипция всегда пишется как \ʃjɛ̃\
             page_text = soup.get_text()
             match = re.search(r'\\([^\\]+)\\', page_text)
             if match:
@@ -74,30 +69,21 @@ def get_full_word_data(user_input: str):
     if not clean_input:
         return None
 
-    # Шаг 1. Определяем направление перевода
     if is_russian(clean_input):
-        # Если ввели на русском:
         ru_word = clean_input
         print(f"Обнаружен русский язык. Ищем перевод для: '{ru_word}'...")
         
-        # Переводим с русского (ru) на французский (fr)
         fr_word = get_translation_mymemory(ru_word, "ru", "fr")
         
         if not fr_word:
             return None
     else:
-        # Если ввели на французском (или латиницей):
         fr_word = clean_input
         print(f"Обнаружен французский язык. Ищем перевод для: '{fr_word}'...")
-        
-        # Переводим с французского (fr) на русский (ru)
         ru_word = get_translation_mymemory(fr_word, "fr", "ru")
 
-    # Шаг 2. Зная французское слово, вытягиваем для него транскрипцию
     print(f"Запрашиваем транскрипцию для французского слова: '{fr_word}'...")
     transcription = fetch_transcription_from_wiktionary(fr_word)
-
-    # Возвращаем финальный результат, очищенный от случайных пробелов
     return fr_word.lower(), transcription, ru_word.lower()
 
 
@@ -105,12 +91,10 @@ def get_full_word_data(user_input: str):
 if __name__ == "__main__":
     print("--- Тестирование модуля api_worker.py ---")
     
-    # Тест 1: Ввод на французском
     print("\nТест 1 (Ввод: 'chat'):")
     res1 = get_full_word_data("chat")
     print("Результат:", res1)
     
-    # Тест 2: Ввод на русском
     print("\nТест 2 (Ввод: 'собака'):")
     res2 = get_full_word_data("собака")
     print("Результат:", res2)
