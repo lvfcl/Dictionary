@@ -1,114 +1,81 @@
-import requests 
-from bs4 import BeautifulSoup 
-import re 
+import json
+import re
+from openai import OpenAI
+
+# Инициализируем клиента нейросети. 
+# Сюда можно подставить любой OpenAI-совместимый сервис (например, Groq, DeepSeek, OpenAI)
+client = OpenAI(
+    base_url="https://api.groq.com/openai/v1", # Пример для бесплатного и быстрого Groq
+    api_key="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"
+)
 
 def is_russian(text: str) -> bool:
     """ Определяет, написан ли текст на русском языке. """
     return bool(re.search('[а-яА-ЯёЁ]', text))
 
-def get_translation_mymemory(text: str, source_lang: str, target_lang: str) -> str:
-    """ Отправляет запрос к бесплатному API MyMemory для перевода слова. """
-    url = f"https://api.mymemory.translated.net/get?q={text}&langpair={source_lang}|{target_lang}"
-    try: 
-        response = requests.get(url, timeout=5) 
-        if response.status_code == 200: 
-            data = response.json() 
-            translated_text = data["responseData"]["translatedText"] 
-            return translated_text.strip().lower() 
-    except Exception as e: 
-        print(f"Ошибка при запросе к MyMemory API: {e}") 
-    return ""
-
-def fetch_transcription_from_wiktionary(fr_word: str) -> str:
-    """ Ищет транскрипцию во французском Викисловаре. """
-    word_url = fr_word.lower().strip() 
-    url = f"https://fr.wiktionary.org/wiki/{word_url}" 
-    headers = { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            span = soup.find("span", class_="API")
-            if span:
-                return span.text.strip()
-            
-            text = soup.get_text()
-            match = re.search(r'/([^/\s]+)/', text)
-            if match:
-                return f"[{match.group(1)}]"
-    except Exception as e:
-        print(f"Ошибка парсинга Викисловаря: {e}")
-    return "[-]"
-
-def fetch_context_examples(word: str, src_lang: str = "fr", tgt_lang: str = "ru") -> list:
-    """
-    Парсит сайт Reverso Context для получения примеров предложений.
-    Возвращает список словарей: [{'fr': '...', 'ru': '...'}, ...]
-    """
-    word_url = word.lower().strip()
-    url = f"https://context.reverso.net/translation/french-russian/{word_url}"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    
-    examples = []
-    try:
-        response = requests.get(url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            src_sentences = soup.find_all('div', class_='src')
-            trg_sentences = soup.find_all('div', class_='trg')
-            
-            for src, trg in zip(src_sentences[:2], trg_sentences[:2]):
-                fr_text = src.get_text().strip()
-                ru_text = trg.get_text().strip()
-                
-                if fr_text and ru_text:
-                    examples.append({
-                        "fr": fr_text,
-                        "ru": ru_text
-                    })
-    except Exception as e:
-        print(f"Ошибка при парсинге Reverso Context: {e}")
-        
-    return examples
-
 def get_full_word_data(user_input: str):
     """
-    Главная функция модуля. Принимает ввод пользователя, определяет язык,
-    делает запросы и возвращает кортеж:
-    (французское_слово, транскрипция, русский_перевод, список_примеров)
+    Отправляет запрос к нейросети и получает структурированные данные о слове:
+    французское слово (с артиклем), транскрипцию, русский перевод и контекстные примеры.
     """
     user_input = user_input.strip()
     if not user_input:
         return "", "", "", []
 
-    if is_russian(user_input):
-        russian = user_input
-        french = get_translation_mymemory(russian, "ru", "fr")
-        transcription = fetch_transcription_from_wiktionary(french) if french else "[-]"
-    else:
-        french = user_input
-        russian = get_translation_mymemory(french, "fr", "ru")
-        transcription = fetch_transcription_from_wiktionary(french)
+    # Определяем направление перевода для подсказки ИИ
+    direction = "с русского на французский" if is_russian(user_input) else "с французского на русский"
 
-    examples = []
-    if french:
-        examples = fetch_context_examples(french)
+    # Строим системный промт (инструкцию), заставляя ИИ вернуть строго JSON структуру
+    system_prompt = (
+        "Ты — профессиональный лингвист и словарь французского языка. "
+        "Твоя задача — переводить слова и предоставлять информацию строго в формате JSON. "
+        "ПРАВИЛА:\n"
+        "1. Если слово во французском языке является существительным, ты ОБЯЗАН добавить к нему "
+        "соответствующий определенный артикль (le, la или l' для слов на гласную/немую h). "
+        "Например: 'яблоко' -> 'la pomme', 'arbre' -> 'l\'arbre', 'стакан' -> 'le verre'.\n"
+        "2. Укажи правильную транскрипцию слова в квадратных скобках или между косыми чертами.\n"
+        "3. Дай полный перевод (если значений несколько, перечисли их через запятую).\n"
+        "4. Сгенерируй ровно 2 живых примера предложений во французском языке с этим словом и их точный перевод на русский.\n"
+        "Ответ должен содержать ТОЛЬКО JSON без каких-либо вводных слов или разметки markdown."
+    )
 
-    return french, transcription, russian, examples
+    user_prompt = f"Переведи слово '{user_input}' {direction}. Структура JSON должна быть: {{\"french\": \"...\", \"transcription\": \"...\", \"russian\": \"...\", \"examples\": [{{\"fr\": \"...\", \"ru\": \"...\"}}, {{\"fr\": \"...\", \"ru\": \"...\"}}]}}"
+
+    try:
+        # Запрос к нейросети
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile", # Быстрая и умная модель (для Groq)
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.3, # Низкая креативность для стабильности формата
+            response_format={"type": "json_object"} # Принудительный режим JSON
+        )
+        
+        # Читаем сырой текст ответа
+        raw_content = response.choices[0].message.content
+        data = json.loads(raw_content)
+        
+        # Достаем данные из JSON структуры
+        french = data.get("french", "").strip().lower()
+        transcription = data.get("transcription", "[-]").strip()
+        russian = data.get("russian", "").strip().lower()
+        examples = data.get("examples", [])
+        
+        return french, transcription, russian, examples
+
+    except Exception as e:
+        print(f"Ошибка при запросе к нейросети: {e}")
+        # Возвращаем базовые заглушки в случае сбоя сети
+        return user_input, "[-]", "ошибка перевода", []
+
 
 if __name__ == "__main__":
-    print("--- Тестирование модуля api_worker.py ---")
-    word = "chat"
-    print(f"Тестируем слово: {word}")
-    res = get_full_word_data(word)
-    print("Результат:")
-    print(f"Фр: {res[0]}")
-    print(f"Транскрипция: {res[1]}")
-    print(f"Рус: {res[2]}")
-    print(f"Примеры: {res[3]}")
+    print("--- Тестирование работы словаря через Нейросеть ---")
+    # Проверяем, как ИИ справится с подстановкой рода
+    res1 = get_full_word_data("стакан")
+    print(f"Результат для 'стакан':\nСлово: {res1[0]}\nТранскрипция: {res1[1]}\nПеревод: {res1[2]}\nПримеры: {res1[3]}\n")
+    
+    res2 = get_full_word_data("яблоко")
+    print(f"Результат для 'яблоко':\nСлово: {res2[0]}")
