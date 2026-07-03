@@ -1,9 +1,9 @@
 import sys
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QLabel)
+                             QHeaderView, QLabel, QTextBrowser)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont
 
 class DictionaryUI(QMainWindow):
     def __init__(self):
@@ -12,8 +12,8 @@ class DictionaryUI(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("Французский Словарь v1.0")
-        self.resize(750, 550)
-        self.setMinimumSize(600, 400)
+        self.resize(1050, 600)
+        self.setMinimumSize(800, 450)
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -21,11 +21,6 @@ class DictionaryUI(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
-
-        self.title_label = QLabel("Мой Личный Словарь")
-        self.title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(self.title_label)
 
         input_layout = QHBoxLayout()
         input_layout.setSpacing(10)
@@ -45,11 +40,13 @@ class DictionaryUI(QMainWindow):
         input_layout.addWidget(self.add_button)
         main_layout.addLayout(input_layout)
 
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(15)
+
         self.table = QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Французский", "Транскрипция", "Русский"])
         self.table.setFont(QFont("Arial", 11))
-        
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -57,8 +54,21 @@ class DictionaryUI(QMainWindow):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         header.setFont(QFont("Arial", 11, QFont.Weight.Bold))
-        
-        main_layout.addWidget(self.table)
+        content_layout.addWidget(self.table, stretch=2)
+
+        self.details_panel = QTextBrowser()
+        self.details_panel.setPlaceholderText("Нажмите на слово в таблице, чтобы увидеть подробную информацию с примерами контекста...")
+        self.details_panel.setFont(QFont("Arial", 11))
+        self.details_panel.setMinimumWidth(320)
+        content_layout.addWidget(self.details_panel, stretch=1)
+
+        main_layout.addLayout(content_layout)
+
+        self.review_button = QPushButton("Учить слова")
+        self.review_button.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        self.review_button.setFixedHeight(40)
+        self.review_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        main_layout.addWidget(self.review_button)
 
         self.apply_styles()
 
@@ -79,7 +89,7 @@ class DictionaryUI(QMainWindow):
                 color: #333333;
             }
             QLineEdit:focus {
-                border: 2px solid #4A90E2; /* Подсветка поля при клике */
+                border: 2px solid #4A90E2;
             }
             QPushButton {
                 background-color: #4A90E2;
@@ -88,16 +98,28 @@ class DictionaryUI(QMainWindow):
                 border-radius: 6px;
             }
             QPushButton:hover {
-                background-color: #357ABD; /* Темнеет при наведении */
+                background-color: #357ABD;
             }
             QPushButton:pressed {
-                background-color: #2D689C; /* Еще темнее при клике */
+                background-color: #2D689C;
             }
+            
+            /* Стили для зеленой кнопки Anki */
+            QPushButton#review_btn_style {
+                background-color: #2ECC71;
+            }
+            QPushButton#review_btn_style:hover {
+                background-color: #27AE60;
+            }
+            QPushButton#review_btn_style:pressed {
+                background-color: #1E8449;
+            }
+            
             QTableWidget {
                 border: 1px solid #E0E0E0;
                 gridline-color: #E0E0E0;
                 background-color: #FFFFFF;
-                alternate-background-color: #F1F5F9; /* Цвет четных строк */
+                alternate-background-color: #F1F5F9;
                 border-radius: 6px;
             }
             QHeaderView::section {
@@ -107,7 +129,13 @@ class DictionaryUI(QMainWindow):
                 border: none;
                 border-bottom: 2px solid #CBD5E1;
             }
+            QTextBrowser {
+                border: 1px solid #E0E0E0;
+                border-radius: 6px;
+                background-color: #FFFFFF;
+            }
         """)
+        self.review_button.setObjectName("review_btn_style")
 
     def add_row(self, french: str, transcription: str, russian: str):
         """Удобный метод для добавления новой строки в таблицу извне"""
@@ -135,5 +163,3 @@ if __name__ == "__main__":
     window = DictionaryUI()
     window.show()
     sys.exit(app.exec())
-
-    

@@ -30,12 +30,10 @@ def fetch_transcription_from_wiktionary(fr_word: str) -> str:
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
-            # Ищем стандартный тег транскрипции во французском Викисловаре
             span = soup.find("span", class_="API")
             if span:
                 return span.text.strip()
             
-            # Альтернативный поиск по тексту между косыми чертами
             text = soup.get_text()
             match = re.search(r'/([^/\s]+)/', text)
             if match:
@@ -52,7 +50,6 @@ def fetch_context_examples(word: str, src_lang: str = "fr", tgt_lang: str = "ru"
     word_url = word.lower().strip()
     url = f"https://context.reverso.net/translation/french-russian/{word_url}"
     
-    # Reverso Context блокирует запросы без валидного User-Agent
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
@@ -63,13 +60,10 @@ def fetch_context_examples(word: str, src_lang: str = "fr", tgt_lang: str = "ru"
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Находим блоки с примерами предложений
             src_sentences = soup.find_all('div', class_='src')
             trg_sentences = soup.find_all('div', class_='trg')
             
-            # Берём максимум 2-3 примера, как заказывали
             for src, trg in zip(src_sentences[:2], trg_sentences[:2]):
-                # Очищаем текст от лишних пробелов и переносов строк
                 fr_text = src.get_text().strip()
                 ru_text = trg.get_text().strip()
                 
@@ -94,24 +88,20 @@ def get_full_word_data(user_input: str):
         return "", "", "", []
 
     if is_russian(user_input):
-        # Если ввели на русском — ищем французское слово
         russian = user_input
         french = get_translation_mymemory(russian, "ru", "fr")
         transcription = fetch_transcription_from_wiktionary(french) if french else "[-]"
     else:
-        # Если ввели на французском — ищем русский перевод
         french = user_input
         russian = get_translation_mymemory(french, "fr", "ru")
         transcription = fetch_transcription_from_wiktionary(french)
 
-    # Тянем контекст (предложения) для французского слова
     examples = []
     if french:
         examples = fetch_context_examples(french)
 
     return french, transcription, russian, examples
 
-# Блок для изолированного тестирования модуля
 if __name__ == "__main__":
     print("--- Тестирование модуля api_worker.py ---")
     word = "chat"
