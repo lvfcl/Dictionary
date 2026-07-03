@@ -38,15 +38,12 @@ class ReviewDialog(QDialog):
         self.setWindowTitle("Интервальное повторение (Anki)")
         self.resize(500, 400)
         
-        # Получаем список слов, которые нужно повторить сегодня
         all_words = database.load_words()
         today_str = datetime.now().strftime("%Y-%m-%d")
         
-        # Фильтруем: берем слова, где дата повторения наступила или прошла
         self.queue = [w for w in all_words if w.get("next_review", today_str) <= today_str]
         self.current_card = None
         
-        # КРИТИЧЕСКАЯ ПРОВЕРКА: Если повторять нечего, сразу предупреждаем и не строим интерфейс
         if not self.queue:
             QMessageBox.information(self, "Готово!", "На сегодня нет слов для повторения. Отдыхайте!")
             self.reject()
@@ -58,18 +55,15 @@ class ReviewDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout()
         
-        # Счетчик оставшихся карточек
         self.counter_label = QLabel(self)
         self.counter_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.counter_label)
         
-        # Изучаемое французское слово
         self.word_label = QLabel(self)
         self.word_label.setFont(QFont("Arial", 24, QFont.Weight.Bold))
         self.word_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.word_label)
         
-        # Блок ответа (транскрипция, перевод, примеры)
         self.answer_box = QWidget()
         answer_layout = QVBoxLayout(self.answer_box)
         
@@ -90,7 +84,6 @@ class ReviewDialog(QDialog):
         
         layout.addWidget(self.answer_box)
         
-        # Кнопка "Показать перевод"
         self.show_answer_btn = QPushButton("Показать перевод", self)
         self.show_answer_btn.setFont(QFont("Arial", 12))
         self.show_answer_btn.setFixedHeight(40)
@@ -98,7 +91,6 @@ class ReviewDialog(QDialog):
         self.show_answer_btn.clicked.connect(self.show_answer)
         layout.addWidget(self.show_answer_btn)
         
-        # Панель кнопок сложности
         self.buttons_panel = QWidget()
         buttons_layout = QHBoxLayout(self.buttons_panel)
         
@@ -126,18 +118,15 @@ class ReviewDialog(QDialog):
         self.counter_label.setText(f"Осталось карточек: {len(self.queue)}")
         self.current_card = self.queue.pop(0)
         
-        # Шаг 1: Показываем только иностранное слово
         self.word_label.setText(self.current_card.get("french", ""))
         self.trans_label.setText(self.current_card.get("transcription", ""))
         self.ru_label.setText(self.current_card.get("russian", ""))
         
-        # Формируем текст примеров
         examples_text = ""
         for ex in self.current_card.get("examples", []):
             examples_text += f"<b>FR:</b> {ex['fr']}<br><b>RU:</b> {ex['ru']}<br><br>"
         self.examples_browser.setHtml(examples_text if examples_text else "Примеров контекста нет.")
         
-        # Скрываем блок ответов и показываем кнопку "Показать перевод"
         self.answer_box.hide()
         self.buttons_panel.hide()
         self.show_answer_btn.show()
@@ -150,25 +139,20 @@ class ReviewDialog(QDialog):
 
     def handle_score(self, quality):
         """Обрабатывает нажатие на кнопку градации сложности."""
-        # ЗАЩИТА: Если карточки нет (None), ничего не делаем
         if not self.current_card:
             return
 
-        # Рассчитываем новые интервалы по алгоритму SM-2
         updated_card = database.update_card_review(self.current_card, quality)
         
-        # Сначала обновляем эту карточку в общем списке слов
         all_words = database.load_words()
         for i, word in enumerate(all_words):
             if word.get("french") == updated_card["french"]:
                 all_words[i] = updated_card
                 break
                 
-        # Сохраняем обновленные данные в файл базы данных
         with open("dictionary.json", "w", encoding="utf-8") as f:
             json.dump(all_words, f, ensure_ascii=False, indent=4)
             
-        # Если нажали "Забыл" (0), возвращаем карту обратно в текущую сессию
         if quality == 0:
             self.queue.append(updated_card)
             
@@ -179,14 +163,11 @@ class MainApp(DictionaryUI):
     def __init__(self):
         super().__init__()
         
-        # Привязываем сигналы ввода элементов главного UI
         self.add_button.clicked.connect(self.start_translation)
         self.word_input.returnPressed.connect(self.start_translation)
         
-        # Привязываем кнопку "Учить слова"
         self.review_button.clicked.connect(self.open_review_mode)
         
-        # Привязываем клик по строке таблицы для вывода деталей
         self.table.itemClicked.connect(self.show_word_details)
         
         self.load_saved_data()

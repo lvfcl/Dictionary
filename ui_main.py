@@ -73,14 +73,19 @@ class DictionaryUI(QMainWindow):
         self.apply_styles()
 
     def apply_styles(self):
-        """Метод для придания приложению современного вида"""
+        """Метод для придания приложению современного вида с полной независимостью от тем Windows"""
         self.setStyleSheet("""
+            /* Главное окно приложения */
             QMainWindow {
                 background-color: #F8F9FA;
             }
+            
+            /* Все стандартные текстовые подписи */
             QLabel {
                 color: #2B2D42;
             }
+            
+            /* Поле ввода слова */
             QLineEdit {
                 border: 2px solid #E0E0E0;
                 border-radius: 6px;
@@ -88,9 +93,12 @@ class DictionaryUI(QMainWindow):
                 background-color: #FFFFFF;
                 color: #333333;
             }
+            /* Подсветка поля ввода при фокусе */
             QLineEdit:focus {
                 border: 2px solid #4A90E2;
             }
+            
+            /* Все стандартные кнопки (например, "Добавить") */
             QPushButton {
                 background-color: #4A90E2;
                 color: white;
@@ -104,7 +112,7 @@ class DictionaryUI(QMainWindow):
                 background-color: #2D689C;
             }
             
-            /* Стили для зеленой кнопки Anki */
+            /* Стили для зеленой нижней кнопки Anki ("Учить слова") */
             QPushButton#review_btn_style {
                 background-color: #2ECC71;
             }
@@ -115,24 +123,73 @@ class DictionaryUI(QMainWindow):
                 background-color: #1E8449;
             }
             
+            /* Корпус таблицы */
             QTableWidget {
                 border: 1px solid #E0E0E0;
                 gridline-color: #E0E0E0;
                 background-color: #FFFFFF;
-                alternate-background-color: #F1F5F9;
+                alternate-background-color: #F1F5F9; /* Цвет четных строк */
                 border-radius: 6px;
+                color: #333333;
             }
-            QHeaderView::section {
+            
+            /* Обычные ячейки со словами */
+            QTableWidget::item {
+                color: #333333;
+                padding: 5px;
+            }
+            /* Эффект наведения мыши на слово */
+            QTableWidget::item:hover {
+                background-color: #E2E8F0;
+                color: #000000;
+            }
+            /* Выделение выбранного слова сочным фиолетовым цветом */
+            QTableWidget::item:selected {
+                background-color: #9c23ed;
+                color: #FFFFFF;
+            }
+            
+            /* Шапка таблицы (Французский, Транскрипция, Русский) */
+            QHeaderView::section:horizontal {
                 background-color: #E2E8F0;
                 color: #4A5568;
                 padding: 6px;
                 border: none;
                 border-bottom: 2px solid #CBD5E1;
             }
+            
+            /* Нумерация строк (Левая колонка с цифрами) */
+            QHeaderView::section:vertical {
+                background-color: #E2E8F0;
+                color: #4A5568;
+                padding: 5px;
+                border: none;
+                border-right: 2px solid #CBD5E1;
+                text-align: center;
+            }
+            
+            /* КРИТИЧНО: Запрещаем нумерации строк выделяться и менять цвет при клике */
+            QHeaderView::section:vertical:selected, 
+            QHeaderView::section:vertical:checked,
+            QHeaderView::section:vertical:disabled {
+                background-color: #E2E8F0;
+                color: #4A5568;
+            }
+            
+            /* Верхний левый пустой угол таблицы (над номерами строк) */
+            QTableCornerButton::section {
+                background-color: #E2E8F0;
+                border: none;
+                border-bottom: 2px solid #CBD5E1;
+                border-right: 2px solid #CBD5E1;
+            }
+            
+            /* Правая HTML панель (Карточка детальной информации) */
             QTextBrowser {
                 border: 1px solid #E0E0E0;
                 border-radius: 6px;
                 background-color: #FFFFFF;
+                color: #333333;
             }
         """)
         self.review_button.setObjectName("review_btn_style")
