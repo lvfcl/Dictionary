@@ -2,10 +2,8 @@ import json
 import re
 from openai import OpenAI
 
-# Инициализируем клиента нейросети. 
-# Сюда можно подставить любой OpenAI-совместимый сервис (например, Groq, DeepSeek, OpenAI)
 client = OpenAI(
-    base_url="https://api.groq.com/openai/v1", # Пример для бесплатного и быстрого Groq
+    base_url="https://api.groq.com/openai/v1",
     api_key="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"
 )
 
@@ -22,10 +20,8 @@ def get_full_word_data(user_input: str):
     if not user_input:
         return "", "", "", []
 
-    # Определяем направление перевода для подсказки ИИ
     direction = "с русского на французский" if is_russian(user_input) else "с французского на русский"
 
-    # Строим системный промт (инструкцию), заставляя ИИ вернуть строго JSON структуру
     system_prompt = (
         "Ты — профессиональный лингвист и словарь французского языка. "
         "Твоя задача — переводить слова и предоставлять информацию строго в формате JSON. "
@@ -42,22 +38,19 @@ def get_full_word_data(user_input: str):
     user_prompt = f"Переведи слово '{user_input}' {direction}. Структура JSON должна быть: {{\"french\": \"...\", \"transcription\": \"...\", \"russian\": \"...\", \"examples\": [{{\"fr\": \"...\", \"ru\": \"...\"}}, {{\"fr\": \"...\", \"ru\": \"...\"}}]}}"
 
     try:
-        # Запрос к нейросети
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile", # Быстрая и умная модель (для Groq)
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.3, # Низкая креативность для стабильности формата
-            response_format={"type": "json_object"} # Принудительный режим JSON
+            temperature=0.3,
+            response_format={"type": "json_object"}
         )
         
-        # Читаем сырой текст ответа
         raw_content = response.choices[0].message.content
         data = json.loads(raw_content)
         
-        # Достаем данные из JSON структуры
         french = data.get("french", "").strip().lower()
         transcription = data.get("transcription", "[-]").strip()
         russian = data.get("russian", "").strip().lower()
@@ -67,13 +60,11 @@ def get_full_word_data(user_input: str):
 
     except Exception as e:
         print(f"Ошибка при запросе к нейросети: {e}")
-        # Возвращаем базовые заглушки в случае сбоя сети
         return user_input, "[-]", "ошибка перевода", []
 
 
 if __name__ == "__main__":
     print("--- Тестирование работы словаря через Нейросеть ---")
-    # Проверяем, как ИИ справится с подстановкой рода
     res1 = get_full_word_data("стакан")
     print(f"Результат для 'стакан':\nСлово: {res1[0]}\nТранскрипция: {res1[1]}\nПеревод: {res1[2]}\nПримеры: {res1[3]}\n")
     

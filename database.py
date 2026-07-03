@@ -111,10 +111,8 @@ def delete_word(french_word: str) -> bool:
     """
     try:
         words = load_words()
-        # Фильтруем список: оставляем только те слова, которые НЕ совпадают с удаляемым
         filtered_words = [w for w in words if w.get("french", "").lower() != french_word.lower()]
         
-        # Если длина списка не изменилась, значит, удалять было нечего
         if len(words) == len(filtered_words):
             return False
             
