@@ -31,39 +31,53 @@ class TranslationThread(QThread):
             self.error.emit(str(e))
 
 
+import random  # <-- Не забудь добавить импорт random в самый верх main.py
+from PyQt6.QtWidgets import QInputDialog  # <-- Добавь QInputDialog в импорт QtWidgets
+
 class ReviewDialog(QDialog):
     """Диалоговое окно для интервального повторения слов (Режим Anki)"""
-    def __init__(self, parent=None):
+    def __init__(self, limit_count, parent=None): # <-- Принимаем лимит карточек
         super().__init__(parent)
         self.setWindowTitle("Интервальное повторение (Anki)")
         self.resize(500, 400)
         
+        # Получаем список слов, которые нужно повторить сегодня
         all_words = database.load_words()
         today_str = datetime.now().strftime("%Y-%m-%d")
         
-        self.queue = [w for w in all_words if w.get("next_review", today_str) <= today_str]
-        self.current_card = None
+        # Фильтруем: берем слова, где дата повторения наступила или прошла
+        due_words = [w for w in all_words if w.get("next_review", today_str) <= today_str]
         
-        if not self.queue:
+        if not due_words:
             QMessageBox.information(self, "Готово!", "На сегодня нет слов для повторения. Отдыхайте!")
             self.reject()
             return
 
+        # АНАЛОГИЯ С ANKI: перемешиваем случайным образом, чтобы они не шли подряд
+        random.shuffle(due_words)
+        
+        # Ограничиваем колоду тем количеством, которое выбрал пользователь
+        self.queue = due_words[:limit_count]
+        self.current_card = None
+        
         self.init_ui()
         self.next_card()
 
     def init_ui(self):
         layout = QVBoxLayout()
         
+        # Счетчик оставшихся карточек
         self.counter_label = QLabel(self)
         self.counter_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.counter_label)
         
+        # Изучаемое французское слово
         self.word_label = QLabel(self)
         self.word_label.setFont(QFont("Arial", 24, QFont.Weight.Bold))
         self.word_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.word_label)
         
+        # Блок ответа (транскрипция, перевод, примеры)
         self.answer_box = QWidget()
         answer_layout = QVBoxLayout(self.answer_box)
         
@@ -84,6 +98,7 @@ class ReviewDialog(QDialog):
         
         layout.addWidget(self.answer_box)
         
+        # Кнопка "Показать перевод"
         self.show_answer_btn = QPushButton("Показать перевод", self)
         self.show_answer_btn.setFont(QFont("Arial", 12))
         self.show_answer_btn.setFixedHeight(40)
@@ -91,6 +106,7 @@ class ReviewDialog(QDialog):
         self.show_answer_btn.clicked.connect(self.show_answer)
         layout.addWidget(self.show_answer_btn)
         
+        # Панель кнопок сложности
         self.buttons_panel = QWidget()
         buttons_layout = QHBoxLayout(self.buttons_panel)
         
@@ -111,17 +127,19 @@ class ReviewDialog(QDialog):
     def next_card(self):
         """Переходит к следующему слову в очереди."""
         if not self.queue:
-            QMessageBox.information(self, "Готово!", "Отличная работа! На сегодня все слова повторены.")
+            QMessageBox.information(self, "Готово!", "Отличная работа! Сессия завершена, выбранная колода изучена.")
             self.accept()
             return
             
-        self.counter_label.setText(f"Осталось карточек: {len(self.queue)}")
+        self.counter_label.setText(f"Осталось карточек в колоде: {len(self.queue)}")
         self.current_card = self.queue.pop(0)
         
+        # Показываем только иностранное слово
         self.word_label.setText(self.current_card.get("french", ""))
         self.trans_label.setText(self.current_card.get("transcription", ""))
         self.ru_label.setText(self.current_card.get("russian", ""))
         
+        # Сборка примеров ИИ
         examples_text = ""
         for ex in self.current_card.get("examples", []):
             examples_text += f"<b>FR:</b> {ex['fr']}<br><b>RU:</b> {ex['ru']}<br><br>"
@@ -142,6 +160,7 @@ class ReviewDialog(QDialog):
         if not self.current_card:
             return
 
+        # Рассчитываем новые интервалы в базе
         updated_card = database.update_card_review(self.current_card, quality)
         
         all_words = database.load_words()
@@ -153,6 +172,8 @@ class ReviewDialog(QDialog):
         with open("dictionary.json", "w", encoding="utf-8") as f:
             json.dump(all_words, f, ensure_ascii=False, indent=4)
             
+        # Как в Anki: если нажали "Забыл" (0), карточка не исчезает из текущей сессии,
+        # а возвращается в конец колоды, пока мы её не заучим!
         if quality == 0:
             self.queue.append(updated_card)
             
@@ -172,6 +193,78 @@ class MainApp(DictionaryUI):
         
         self.load_saved_data()
 
+    def on_delete_button_clicked(self):
+        """Определяет, у какого слова был нажат крестик, и запускает удаление"""
+        # Узнаем, какая именно кнопка отправила сигнал
+        button = self.sender()
+        if button:
+            # Достаем французское слово, которое мы сохранили в свойство кнопки
+            french_word = button.property("word")
+            
+            # Запрашиваем подтверждение
+            reply = QMessageBox.question(
+                self, 
+                "Удаление слова", 
+                f"Вы уверены, что хотите безвозвратно удалить слово <b>{french_word}</b>?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                # Удаляем из JSON базы
+                if database.delete_word(french_word):
+                    # Перезагружаем данные в таблицу, чтобы индексы строк и кнопок обновились корректно
+                    self.load_saved_data()
+                    self.details_panel.clear()
+                    self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
+                else:
+                    QMessageBox.warning(self, "Ошибка", "Не удалось удалить слово из базы данных.")
+
+    def keyPressEvent(self, event):
+        """Перехватывает нажатие клавиш в главном окне"""
+        # Если нажата клавиша Delete или Backspace
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            # Проверяем, выделена ли сейчас строка в таблице
+            selected_items = self.table.selectedItems()
+            if selected_items:
+                self.confirm_and_delete_word()
+        else:
+            # Если нажата любая другая клавиша — передаем событие дальше по цепочке
+            super().keyPressEvent(event)
+
+    def confirm_and_delete_word(self):
+        """Запрашивает подтверждение и удаляет выбранное слово"""
+        # Вычисляем текущую выбранную строку
+        current_row = self.table.currentRow()
+        if current_row < 0:
+            return
+            
+        # Берем французское слово из первой колонки (индекс 0)
+        french_word = self.table.item(current_row, 0).text()
+        
+        # Создаем стильное окно подтверждения
+        reply = QMessageBox.question(
+            self, 
+            "Удаление слова", 
+            f"Вы уверены, что хотите безвозвратно удалить слово <b>{french_word}</b>?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # 1. Удаляем из JSON базы данных
+            if database.delete_word(french_word):
+                # 2. Удаляем визуальную строку из таблицы PyQt6
+                self.table.removeRow(current_row)
+                
+                # 3. Очищаем правую панель с деталями, чтобы там не висело удаленное слово
+                if hasattr(self, 'details_panel'):
+                    self.details_panel.clear()
+                    
+                self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
+            else:
+                QMessageBox.warning(self, "Ошибка", "Не удалось удалить слово из базы данных.")
+
     def load_saved_data(self):
         """Загружает слова из файла JSON и выводит их в таблицу при запуске."""
         words = database.load_words()
@@ -181,7 +274,10 @@ class MainApp(DictionaryUI):
             trans = word.get("transcription", "")
             ru = word.get("russian", "")
             if fr:
-                self.add_row(fr, trans, ru)
+                # Метод add_row теперь возвращает кнопку!
+                btn = self.add_row(fr, trans, ru)
+                # Подключаем клик на крестик
+                btn.clicked.connect(self.on_delete_button_clicked)
 
     def start_translation(self):
         """Запускает процесс перевода в фоновом режиме."""
@@ -201,11 +297,12 @@ class MainApp(DictionaryUI):
     def on_translation_success(self, result):
         """Срабатывает, когда API успешно вернул данные слова."""
         fr_word, transcription, ru_word, examples = result
-        
         is_saved = database.save_word(fr_word, transcription, ru_word, examples)
         
         if is_saved:
-            self.add_row(fr_word, transcription, ru_word)
+            btn = self.add_row(fr_word, transcription, ru_word)
+            # Подключаем клик на крестик для только что добавленного слова
+            btn.clicked.connect(self.on_delete_button_clicked)
             self.render_details_html(fr_word, transcription, ru_word, examples)
         else:
             QMessageBox.information(self, "Внимание", f"Слово '{fr_word}' уже есть в вашем словаре!")
@@ -224,10 +321,28 @@ class MainApp(DictionaryUI):
         self.word_input.setFocus()
 
     def open_review_mode(self):
-        """Открывает диалоговое окно режима заучивания карточек."""
-        dialog = ReviewDialog(self)
-        dialog.exec()
-        self.load_saved_data()
+        """Запрашивает количество карточек и открывает диалоговое окно режима заучивания."""
+        all_words = database.load_words()
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        due_count = len([w for w in all_words if w.get("next_review", today_str) <= today_str])
+        
+        if due_count == 0:
+            QMessageBox.information(self, "Готово!", "На сегодня нет слов для повторения. Отдыхайте!")
+            return
+
+        limit, ok = QInputDialog.getInt(
+            self, 
+            "Размер колоды", 
+            f"Доступно карточек для повторения: {due_count}\nСколько карточек взять в колоду?", 
+            value=min(20, due_count), # По дефолту предлагаем 20 или сколько есть
+            min=1, 
+            max=due_count
+        )
+        
+        if ok:
+            dialog = ReviewDialog(limit, self)
+            dialog.exec()
+            self.load_saved_data()
 
     def show_word_details(self, item):
         """Находит кликнутое слово в базе данных и выводит детальную карточку."""

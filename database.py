@@ -105,6 +105,26 @@ def update_card_review(word_data: dict, quality: int) -> dict:
     
     return word_data
 
+def delete_word(french_word: str) -> bool:
+    """
+    Удаляет слово из JSON-базы по его французскому написанию.
+    """
+    try:
+        words = load_words()
+        # Фильтруем список: оставляем только те слова, которые НЕ совпадают с удаляемым
+        filtered_words = [w for w in words if w.get("french", "").lower() != french_word.lower()]
+        
+        # Если длина списка не изменилась, значит, удалять было нечего
+        if len(words) == len(filtered_words):
+            return False
+            
+        with open("dictionary.json", "w", encoding="utf-8") as f:
+            import json
+            json.dump(filtered_words, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        print(f"Ошибка при удалении слова из базы: {e}")
+        return False
 
 if __name__ == "__main__":
     print("--- Тестирование модуля database.py ---")
