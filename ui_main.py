@@ -23,10 +23,10 @@ class DictionaryUI(QMainWindow):
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
 
-        # self.title_label = QLabel("")
-        # self.title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        # self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # main_layout.addWidget(self.title_label)
+        self.title_label = QLabel("")
+        self.title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(self.title_label)
 
         input_layout = QHBoxLayout()
         input_layout.setSpacing(10)
@@ -62,15 +62,15 @@ class DictionaryUI(QMainWindow):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents) 
+
         content_layout.addWidget(self.table, stretch=2)
 
         self.details_panel = QTextBrowser()
         self.details_panel.setPlaceholderText("Нажмите на слово в таблице, чтобы увидеть подробную информацию с примерами от ИИ...")
         self.details_panel.setFont(QFont("Arial", 11))
         self.details_panel.setMinimumWidth(320)
-        content_layout.addWidget(self.details_panel, stretch=1)
+        content_layout.addWidget(self.details_panel, stretch=1) # Карточка занимает 1/3 ширины
 
         main_layout.addLayout(content_layout)
 

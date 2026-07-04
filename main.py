@@ -1,11 +1,17 @@
+import os
 import sys
 import json
 from datetime import datetime
+import random 
+
+from PyQt6.QtWidgets import QInputDialog
 from PyQt6.QtWidgets import (QApplication, QMessageBox, QDialog, QVBoxLayout, 
                              QHBoxLayout, QLabel, QPushButton, QTextBrowser, QWidget)
-from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl  # <-- Добавлен QUrl
 from PyQt6.QtGui import QFont
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput  # <-- КРИТИЧНО ДЛЯ ЗВУКА
 
+from gtts import gTTS
 from ui_main import DictionaryUI
 import database
 import api_worker
@@ -30,9 +36,6 @@ class TranslationThread(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
-
-import random
-from PyQt6.QtWidgets import QInputDialog
 
 class ReviewDialog(QDialog):
     """Диалоговое окно для интервального повторения слов (Режим Anki)"""
@@ -165,77 +168,26 @@ class ReviewDialog(QDialog):
             
         self.next_card()
 
-
 class MainApp(DictionaryUI):
     def __init__(self):
         super().__init__()
         
+        # Подключаем сигналы к кнопкам и таблице
         self.add_button.clicked.connect(self.start_translation)
         self.word_input.returnPressed.connect(self.start_translation)
-        
         self.review_button.clicked.connect(self.open_review_mode)
-        
         self.table.itemClicked.connect(self.show_word_details)
         
+        # Перехватываем ссылки-динамики внутри HTML панели
+        self.details_panel.setOpenLinks(False)
+        self.details_panel.anchorClicked.connect(self.handle_html_click)
+        
+        # Инициализируем нативный плеер PyQt6 для звука
+        self.player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.player.setAudioOutput(self.audio_output)
+        
         self.load_saved_data()
-
-    def on_delete_button_clicked(self):
-        """Определяет, у какого слова был нажат крестик, и запускает удаление"""
-        button = self.sender()
-        if button:
-            french_word = button.property("word")
-            
-            reply = QMessageBox.question(
-                self, 
-                "Удаление слова", 
-                f"Вы уверены, что хотите безвозвратно удалить слово <b>{french_word}</b>?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-            
-            if reply == QMessageBox.StandardButton.Yes:
-                if database.delete_word(french_word):
-                    self.load_saved_data()
-                    self.details_panel.clear()
-                    self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
-                else:
-                    QMessageBox.warning(self, "Ошибка", "Не удалось удалить слово из базы данных.")
-
-    def keyPressEvent(self, event):
-        """Перехватывает нажатие клавиш в главном окне"""
-        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            selected_items = self.table.selectedItems()
-            if selected_items:
-                self.confirm_and_delete_word()
-        else:
-            super().keyPressEvent(event)
-
-    def confirm_and_delete_word(self):
-        """Запрашивает подтверждение и удаляет выбранное слово"""
-        current_row = self.table.currentRow()
-        if current_row < 0:
-            return
-            
-        french_word = self.table.item(current_row, 0).text()
-        
-        reply = QMessageBox.question(
-            self, 
-            "Удаление слова", 
-            f"Вы уверены, что хотите безвозвратно удалить слово <b>{french_word}</b>?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            if database.delete_word(french_word):
-                self.table.removeRow(current_row)
-                
-                if hasattr(self, 'details_panel'):
-                    self.details_panel.clear()
-                    
-                self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
-            else:
-                QMessageBox.warning(self, "Ошибка", "Не удалось удалить слово из базы данных.")
 
     def load_saved_data(self):
         """Загружает слова из файла JSON и выводит их в таблицу при запуске."""
@@ -289,56 +241,46 @@ class MainApp(DictionaryUI):
         self.add_button.setText("Добавить")
         self.word_input.setFocus()
 
-    def open_review_mode(self):
-        """Запрашивает количество карточек и открывает диалоговое окно режима заучивания."""
-        all_words = database.load_words()
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        due_count = len([w for w in all_words if w.get("next_review", today_str) <= today_str])
-        
-        if due_count == 0:
-            QMessageBox.information(self, "Готово!", "На сегодня нет слов для повторения. Отдыхайте!")
-            return
-
-        limit, ok = QInputDialog.getInt(
-            self, 
-            "Размер колоды", 
-            f"Доступно карточек для повторения: {due_count}\nСколько карточек взять в колоду?", 
-            value=min(20, due_count),
-            min=1, 
-            max=due_count
-        )
-        
-        if ok:
-            dialog = ReviewDialog(limit, self)
-            dialog.exec()
-            self.load_saved_data()
-
     def show_word_details(self, item):
-        """Находит кликнутое слово в базе данных и выводит детальную карточку."""
-        row = item.row()
-        french_word = self.table.item(row, 0).text()
+        """Находит слово в базе и рендерит HTML карточку со звуком"""
+        current_row = self.table.currentRow()
+        if current_row < 0:
+            return
+        french_word = self.table.item(current_row, 0).text()
         
         words = database.load_words()
-        target_word = next((w for w in words if w.get("french") == french_word), None)
-        
-        if target_word:
-            self.render_details_html(
-                target_word.get("french", ""),
-                target_word.get("transcription", ""),
-                target_word.get("russian", ""),
-                target_word.get("examples", [])
-            )
+        for word in words:
+            if word.get("french", "").lower() == french_word.lower():
+                self.render_details_html(
+                    word.get("french", ""),
+                    word.get("transcription", ""),
+                    word.get("russian", ""),
+                    word.get("examples", [])
+                )
+                break
 
     def render_details_html(self, word, transcription, translation, examples):
-        """Генерирует HTML-разметку для боковой панели описания слова."""
+        """Генерирует HTML-разметку для боковой панели с кнопкой аудио-динамика."""
+        clean_word = word.replace("le ", "").replace("la ", "").replace("l'", "").strip()
+        
         html = f"""
         <div style="font-family: Arial, sans-serif; padding: 10px;">
-            <h1 style="color: #2c3e50; margin-bottom: 2px;">{word}</h1>
+            <table style="width: 100%; border: none; margin-bottom: 2px;">
+                <tr>
+                    <td style="vertical-align: middle;">
+                        <h1 style="color: #2c3e50; margin: 0; padding: 0;">{word}</h1>
+                    </td>
+                    <td style="text-align: right; vertical-align: middle; width: 40px;">
+                        <a href="play_audio:{clean_word}" style="text-decoration: none; font-size: 24px; color: #4A90E2;">🔊</a>
+                    </td>
+                </tr>
+            </table>
+            
             <span style="color: #7f8c8d; font-size: 14px; font-style: italic;">{transcription}</span>
             <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
             
             <h3 style="color: #2980b9; margin-bottom: 5px;">Значение / Перевод:</h3>
-            <p style="font-size: 16px; color: #333; background-color: #f8f9fa; padding: 8px; border-left: 3px solid #2980b9;">
+            <p style="font-size: 16px; color: #333; background-color: #f8f9fa; padding: 8px; border-left: 3px solid #2980b9; margin-top: 0;">
                 {translation}
             </p>
             
@@ -346,11 +288,12 @@ class MainApp(DictionaryUI):
         """
         
         if examples:
-            html += '<ul style="padding-left: 20px; color: #555;">'
+            html += '<ul style="padding-left: 20px; color: #555; margin-top: 0;">'
             for ex in examples:
                 html += f"""
                 <li style="margin-bottom: 12px;">
-                    <b style="color: #34495e;">{ex['fr']}</b><br>
+                    <b style="color: #34495e;">{ex['fr']}</b> 
+                    <a href="play_audio:{ex['fr']}" style="text-decoration: none; font-size: 14px; color: #4A90E2;">🔊</a><br>
                     <span style="color: #7f8c8d; font-size: 13px;">{ex['ru']}</span>
                 </li>
                 """
@@ -361,6 +304,74 @@ class MainApp(DictionaryUI):
         html += "</div>"
         self.details_panel.setHtml(html)
 
+    def handle_html_click(self, url):
+        """Перехватывает клик по динамику 🔊 в HTML панели и запускает озвучку"""
+        url_str = url.toString()
+        if url_str.startswith("play_audio:"):
+            text_to_speak = url_str.replace("play_audio:", "")
+            self.speak_french(text_to_speak)
+
+    def speak_french(self, text):
+        """Генерирует аудио через gTTS и воспроизводит его средствами PyQt6"""
+        try:
+            text = text.strip()
+            # Чтобы избежать блокировки одного и того же файла, используем случайный ID в названии
+            filename = f"tts_{random.randint(1000, 9999)}.mp3"
+            
+            # Останавливаем плеер перед загрузкой нового файла
+            self.player.stop()
+            
+            # Генерируем аудио с французским произношением
+            tts = gTTS(text=text, lang='fr', slow=False)
+            tts.save(filename)
+            
+            # Воспроизводим полученный файл встроенным плеером PyQt6
+            file_url = QUrl.fromLocalFile(os.path.abspath(filename))
+            self.player.setSource(file_url)
+            self.player.play()
+            
+            # Старые временные файлы можно будет почистить при закрытии приложения,
+            # сейчас главное, что они уникальны и не блокируют друг друга
+        except Exception as e:
+            print(f"Ошибка воспроизведения звука: {e}")
+
+    def on_delete_button_clicked(self):
+        button = self.sender()
+        if button:
+            french_word = button.property("word")
+            reply = QMessageBox.question(
+                self, "Удаление слова", 
+                f"Вы уверены, что хотите безвозвратно удалить слово <b>{french_word}</b>?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                if database.delete_word(french_word):
+                    self.load_saved_data()
+                    self.details_panel.clear()
+                else:
+                    QMessageBox.warning(self, "Ошибка", "Не удалось удалить слово из базы данных.")
+
+    def open_review_mode(self):
+        """Запрашивает количество карточек по аналогии с Anki и запускает повторение."""
+        all_words = database.load_words()
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        due_count = len([w for w in all_words if w.get("next_review", today_str) <= today_str])
+        
+        if due_count == 0:
+            QMessageBox.information(self, "Готово!", "На сегодня нет слов для повторения. Отдыхайте!")
+            return
+
+        limit, ok = QInputDialog.getInt(
+            self, "Размер колоды", 
+            f"Доступно карточек для повторения: {due_count}\nСколько карточек взять в колоду?", 
+            value=min(20, due_count), min=1, max=due_count
+        )
+        
+        if ok:
+            dialog = ReviewDialog(limit, self)
+            dialog.exec()
+            self.load_saved_data()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
