@@ -23,10 +23,10 @@ class DictionaryUI(QMainWindow):
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
 
-        self.title_label = QLabel("")
-        self.title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(self.title_label)
+        # self.title_label = QLabel("")
+        # self.title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        # self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # main_layout.addWidget(self.title_label)
 
         input_layout = QHBoxLayout()
         input_layout.setSpacing(10)
@@ -50,8 +50,8 @@ class DictionaryUI(QMainWindow):
         content_layout.setSpacing(15)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Французский", "Транскрипция", "Русский", ""])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Французский", "Транскрипция", "Русский", "", ""])
         self.table.setFont(QFont("Arial", 11))
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -62,15 +62,30 @@ class DictionaryUI(QMainWindow):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents) 
-
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        
         content_layout.addWidget(self.table, stretch=2)
+
+        details_container = QWidget()
+        details_layout = QVBoxLayout(details_container)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(8)
+
+        self.play_audio_btn = QPushButton("🔊 Прослушать произношение")
+        self.play_audio_btn.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        self.play_audio_btn.setFixedHeight(38)
+        self.play_audio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.play_audio_btn.setEnabled(False)
+        details_layout.addWidget(self.play_audio_btn)
 
         self.details_panel = QTextBrowser()
         self.details_panel.setPlaceholderText("Нажмите на слово в таблице, чтобы увидеть подробную информацию с примерами от ИИ...")
         self.details_panel.setFont(QFont("Arial", 11))
         self.details_panel.setMinimumWidth(320)
-        content_layout.addWidget(self.details_panel, stretch=1) # Карточка занимает 1/3 ширины
+        details_layout.addWidget(self.details_panel)
+
+        content_layout.addWidget(details_container, stretch=1)
 
         main_layout.addLayout(content_layout)
 
@@ -185,6 +200,21 @@ class DictionaryUI(QMainWindow):
                 border-right: 2px solid #CBD5E1;
             }
             
+            /* Кнопка прослушивания произношения над деталями слова */
+            QPushButton#play_audio_btn_style {
+                background-color: #F0A500;
+            }
+            QPushButton#play_audio_btn_style:hover {
+                background-color: #D6900A;
+            }
+            QPushButton#play_audio_btn_style:pressed {
+                background-color: #B87A00;
+            }
+            QPushButton#play_audio_btn_style:disabled {
+                background-color: #CBD5E1;
+                color: #94A3B8;
+            }
+
             /* Правая HTML панель (Карточка детальной информации) */
             QTextBrowser {
                 border: 1px solid #E0E0E0;
@@ -194,6 +224,7 @@ class DictionaryUI(QMainWindow):
             }
         """)
         self.review_button.setObjectName("review_btn_style")
+        self.play_audio_btn.setObjectName("play_audio_btn_style")
 
     def add_row(self, french: str, transcription: str, russian: str):
         """Вставляет данные в таблицу и генерирует кнопку-крестик в 4-й колонке"""
@@ -212,6 +243,25 @@ class DictionaryUI(QMainWindow):
         self.table.setItem(row_count, 1, item_trans)
         self.table.setItem(row_count, 2, item_ru)
         
+        audio_btn = QPushButton("🔊")
+        audio_btn.setFixedWidth(30)
+        audio_btn.setFixedHeight(25)
+        audio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        audio_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #DCEBFB;
+                border-radius: 4px;
+            }
+        """)
+        audio_btn.setProperty("word", french)
+        audio_btn.setToolTip("Прослушать произношение")
+        self.table.setCellWidget(row_count, 3, audio_btn)
+
         delete_btn = QPushButton("❌")
         delete_btn.setFixedWidth(30)
         delete_btn.setFixedHeight(25)
@@ -230,10 +280,10 @@ class DictionaryUI(QMainWindow):
         
         delete_btn.setProperty("word", french)
         
-        self.table.setCellWidget(row_count, 3, delete_btn)
+        self.table.setCellWidget(row_count, 4, delete_btn)
         self.table.scrollToItem(item_fr)
         
-        return delete_btn
+        return audio_btn, delete_btn
 
 
 if __name__ == "__main__":

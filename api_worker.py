@@ -1,10 +1,14 @@
-import json
+import os
 import re
+import json
 from openai import OpenAI
 
+key = os.getenv("OPENAI_API_KEY", "key")
+url = os.getenv("OPENAI_BASE_URL", "url")
+
 client = OpenAI(
-    base_url="https://api.groq.com/openai/v1",
-    api_key="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"
+    base_url=url,
+    api_key=key
 )
 
 def is_russian(text: str) -> bool:
