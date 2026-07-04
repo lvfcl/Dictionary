@@ -1,6 +1,8 @@
+import random
 import sys
 import json
 from datetime import datetime
+from PyQt6.QtWidgets import QInputDialog
 from PyQt6.QtWidgets import (QApplication, QMessageBox, QDialog, QVBoxLayout, 
                              QHBoxLayout, QLabel, QPushButton, QTextBrowser, QWidget)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl
@@ -32,9 +34,6 @@ class TranslationThread(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
-
-import random
-from PyQt6.QtWidgets import QInputDialog
 
 class ReviewDialog(QDialog):
     """Диалоговое окно для интервального повторения слов (Режим Anki)"""
@@ -214,8 +213,6 @@ class MainApp(DictionaryUI):
         
         self.table.itemClicked.connect(self.show_word_details)
 
-        self.play_audio_btn.clicked.connect(self.play_current_word_audio)
-        
         self.load_saved_data()
 
     def play_word_audio(self, word: str):
@@ -255,7 +252,6 @@ class MainApp(DictionaryUI):
                     self.load_saved_data()
                     self.details_panel.clear()
                     self.current_word = ""
-                    self.play_audio_btn.setEnabled(False)
                     self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
                 else:
                     QMessageBox.warning(self, "Ошибка", "Не удалось удалить слово из базы данных.")
@@ -293,7 +289,6 @@ class MainApp(DictionaryUI):
                 if hasattr(self, 'details_panel'):
                     self.details_panel.clear()
                     self.current_word = ""
-                    self.play_audio_btn.setEnabled(False)
                     
                 self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
             else:
@@ -337,7 +332,6 @@ class MainApp(DictionaryUI):
             audio_btn.clicked.connect(lambda checked, w=fr_word: self.play_word_audio(w))
             delete_btn.clicked.connect(self.on_delete_button_clicked)
             self.render_details_html(fr_word, transcription, ru_word, examples)
-            # Заранее генерируем и кэшируем аудио для нового слова
             audio_manager.get_audio_path(fr_word)
         else:
             QMessageBox.information(self, "Внимание", f"Слово '{fr_word}' уже есть в вашем словаре!")
@@ -398,7 +392,6 @@ class MainApp(DictionaryUI):
     def render_details_html(self, word, transcription, translation, examples):
         """Генерирует HTML-разметку для боковой панели описания слова."""
         self.current_word = word
-        self.play_audio_btn.setEnabled(bool(word))
 
         html = f"""
         <div style="font-family: Arial, sans-serif; padding: 10px;">

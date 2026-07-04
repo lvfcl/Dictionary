@@ -72,13 +72,6 @@ class DictionaryUI(QMainWindow):
         details_layout.setContentsMargins(0, 0, 0, 0)
         details_layout.setSpacing(8)
 
-        self.play_audio_btn = QPushButton("🔊 Прослушать произношение")
-        self.play_audio_btn.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        self.play_audio_btn.setFixedHeight(38)
-        self.play_audio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.play_audio_btn.setEnabled(False)
-        details_layout.addWidget(self.play_audio_btn)
-
         self.details_panel = QTextBrowser()
         self.details_panel.setPlaceholderText("Нажмите на слово в таблице, чтобы увидеть подробную информацию с примерами от ИИ...")
         self.details_panel.setFont(QFont("Arial", 11))
@@ -155,10 +148,18 @@ class DictionaryUI(QMainWindow):
                 color: #333333;
                 padding: 5px;
             }
+                           
             QTableWidget::item:hover {
-                background-color: #E2E8F0;
-                color: #000000;
+            background-color: transparent;
+            color: #333333;
             }
+                           
+            /* Явно убираем любую подсветку при наведении (в т.ч. системную) */
+            QTableWidget::item:hover {
+                background-color: transparent;
+                color: #333333;
+            }
+
             /* Выделение выбранного слова сочным фиолетовым цветом */
             QTableWidget::item:selected {
                 background-color: #9c23ed;
@@ -200,21 +201,6 @@ class DictionaryUI(QMainWindow):
                 border-right: 2px solid #CBD5E1;
             }
             
-            /* Кнопка прослушивания произношения над деталями слова */
-            QPushButton#play_audio_btn_style {
-                background-color: #F0A500;
-            }
-            QPushButton#play_audio_btn_style:hover {
-                background-color: #D6900A;
-            }
-            QPushButton#play_audio_btn_style:pressed {
-                background-color: #B87A00;
-            }
-            QPushButton#play_audio_btn_style:disabled {
-                background-color: #CBD5E1;
-                color: #94A3B8;
-            }
-
             /* Правая HTML панель (Карточка детальной информации) */
             QTextBrowser {
                 border: 1px solid #E0E0E0;
@@ -224,7 +210,6 @@ class DictionaryUI(QMainWindow):
             }
         """)
         self.review_button.setObjectName("review_btn_style")
-        self.play_audio_btn.setObjectName("play_audio_btn_style")
 
     def add_row(self, french: str, transcription: str, russian: str):
         """Вставляет данные в таблицу и генерирует кнопку-крестик в 4-й колонке"""
@@ -292,4 +277,3 @@ if __name__ == "__main__":
     window = DictionaryUI()
     window.show()
     sys.exit(app.exec())
-

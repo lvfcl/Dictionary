@@ -2,9 +2,7 @@ import os
 import re
 import json
 from openai import OpenAI
-
-key = os.getenv("OPENAI_API_KEY", "key")
-url = os.getenv("OPENAI_BASE_URL", "url")
+from config import key, url
 
 client = OpenAI(
     base_url=url,
