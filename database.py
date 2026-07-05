@@ -3,6 +3,8 @@ import json
 from datetime import datetime, timedelta
 
 DB_FILE = "dictionary.json"
+FOLDERS_FILE = "folders.json"
+SETTINGS_FILE = "settings.json"
 
 def init_database():
     """
@@ -29,6 +31,9 @@ def load_words():
     try:
         with open(DB_FILE, 'r', encoding='utf-8') as f:
             words = json.load(f)
+            # Для слов, сохраненных до появления папок, гарантируем наличие ключа "folders"
+            for word in words:
+                word.setdefault("folders", [])
             return words
     except json.JSONDecodeError:
         print("Предупреждение: Файл базы данных поврежден или пуст. Возвращен пустой список.")
@@ -37,9 +42,11 @@ def load_words():
         print(f"Не удалось прочитать базу данных: {e}")
         return []
 
-def save_word(french: str, transcription: str, russian: str, examples: list = None) -> bool:
+def save_word(french: str, transcription: str, russian: str, examples: list = None, folders: list = None) -> bool:
     """
     Добавляет новое слово с базовыми параметрами интервального повторения.
+
+    :param folders: список названий папок, в которые сразу нужно поместить слово
     """
     try:
         words = load_words()
@@ -49,6 +56,7 @@ def save_word(french: str, transcription: str, russian: str, examples: list = No
             "transcription": transcription.strip(),
             "russian": russian.strip(),
             "examples": examples if examples else [],
+            "folders": folders if folders else [],
             "interval": 1,
             "ease_factor": 2.5,
             "repetitions": 0,
@@ -123,6 +131,171 @@ def delete_word(french_word: str) -> bool:
     except Exception as e:
         print(f"Ошибка при удалении слова из базы: {e}")
         return False
+
+
+# ------------------------- Работа с папками (категориями слов) -------------------------
+
+def init_folders_database():
+    """Создает файл со списком папок, если его еще нет."""
+    if not os.path.exists(FOLDERS_FILE):
+        try:
+            with open(FOLDERS_FILE, 'w', encoding='utf-8') as f:
+                json.dump([], f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"Ошибка при создании файла папок: {e}")
+
+
+def load_folders() -> list:
+    """Возвращает список названий всех папок."""
+    init_folders_database()
+    try:
+        with open(FOLDERS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return []
+    except Exception as e:
+        print(f"Не удалось прочитать файл папок: {e}")
+        return []
+
+
+def _save_folders_list(folders: list) -> bool:
+    try:
+        with open(FOLDERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(folders, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        print(f"Ошибка при сохранении списка папок: {e}")
+        return False
+
+
+def create_folder(name: str) -> bool:
+    """Создает новую папку с указанным названием (без дублей)."""
+    name = (name or "").strip()
+    if not name:
+        return False
+
+    folders = load_folders()
+    if any(f.lower() == name.lower() for f in folders):
+        return False
+
+    folders.append(name)
+    return _save_folders_list(folders)
+
+
+def delete_folder(name: str) -> bool:
+    """Удаляет папку и убирает ссылку на нее у всех слов (сами слова не удаляются)."""
+    folders = load_folders()
+    filtered = [f for f in folders if f.lower() != name.lower()]
+
+    if len(filtered) == len(folders):
+        return False
+
+    _save_folders_list(filtered)
+
+    words = load_words()
+    changed = False
+    for word in words:
+        if name in word.get("folders", []):
+            word["folders"].remove(name)
+            changed = True
+
+    if changed:
+        try:
+            with open(DB_FILE, 'w', encoding='utf-8') as f:
+                json.dump(words, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"Ошибка при обновлении слов после удаления папки: {e}")
+
+    return True
+
+
+def add_word_to_folder(french_word: str, folder_name: str) -> bool:
+    """Добавляет уже существующее слово словаря в указанную папку."""
+    words = load_words()
+    updated = False
+
+    for word in words:
+        if word.get("french", "").lower() == french_word.lower():
+            if folder_name not in word.get("folders", []):
+                word.setdefault("folders", []).append(folder_name)
+                updated = True
+            break
+
+    if updated:
+        try:
+            with open(DB_FILE, 'w', encoding='utf-8') as f:
+                json.dump(words, f, ensure_ascii=False, indent=4)
+            return True
+        except Exception as e:
+            print(f"Ошибка при добавлении слова в папку: {e}")
+            return False
+
+    return updated
+
+
+def remove_word_from_folder(french_word: str, folder_name: str) -> bool:
+    """Убирает слово из указанной папки (само слово остается в словаре)."""
+    words = load_words()
+    updated = False
+
+    for word in words:
+        if word.get("french", "").lower() == french_word.lower():
+            if folder_name in word.get("folders", []):
+                word["folders"].remove(folder_name)
+                updated = True
+            break
+
+    if updated:
+        try:
+            with open(DB_FILE, 'w', encoding='utf-8') as f:
+                json.dump(words, f, ensure_ascii=False, indent=4)
+            return True
+        except Exception as e:
+            print(f"Ошибка при удалении слова из папки: {e}")
+            return False
+
+    return updated
+
+
+def get_words_by_folder(folder_name: str) -> list:
+    """Возвращает список слов, находящихся в указанной папке."""
+    words = load_words()
+    return [w for w in words if folder_name in w.get("folders", [])]
+
+
+def get_word_folders(french_word: str) -> list:
+    """Возвращает список папок, в которых находится указанное слово."""
+    words = load_words()
+    for word in words:
+        if word.get("french", "").lower() == french_word.lower():
+            return word.get("folders", [])
+    return []
+
+
+# ------------------------- Настройки приложения (settings.json) -------------------------
+
+def load_settings() -> dict:
+    """Возвращает словарь пользовательских настроек (например, фоновый режим)."""
+    if not os.path.exists(SETTINGS_FILE):
+        return {}
+    try:
+        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Не удалось прочитать файл настроек: {e}")
+        return {}
+
+
+def save_settings(settings: dict) -> bool:
+    """Сохраняет словарь пользовательских настроек в settings.json."""
+    try:
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        print(f"Ошибка при сохранении настроек: {e}")
+        return False
+
 
 if __name__ == "__main__":
     print("--- Тестирование модуля database.py ---")

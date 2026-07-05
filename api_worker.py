@@ -65,6 +65,85 @@ def get_full_word_data(user_input: str):
         return user_input, "[-]", "ошибка перевода", []
 
 
+def suggest_matching_words(topic: str, candidates: list):
+    """
+    Просит нейросеть проанализировать СПИСОК СЛОВ, УЖЕ ЕСТЬ В СЛОВАРЕ пользователя,
+    и отобрать среди них те, что подходят по смыслу к теме папки `topic`
+    (например, "Еда", "Путешествия", "Эмоции"). Никакие новые слова не придумываются —
+    только отбор из переданного списка.
+
+    :param topic: название папки / тема, под которую нужно подобрать слова
+    :param candidates: список словарей вида {"french": ..., "russian": ...} —
+                       слова из словаря пользователя, которые еще не в этой папке
+    :return: список французских слов (строки, ровно как в candidates), которые
+             ИИ посчитал подходящими по теме, отсортированный по релевантности
+    """
+    topic = (topic or "").strip()
+    candidates = candidates or []
+    if not topic or not candidates:
+        return []
+
+    # Нумерованный список "французское слово - русский перевод" для промпта
+    numbered_list = "\n".join(
+        f"{i + 1}. {c.get('french', '')} — {c.get('russian', '')}"
+        for i, c in enumerate(candidates)
+    )
+
+    system_prompt = (
+        "Ты — профессиональный лингвист и словарь французского языка. "
+        "Тебе дают тему (название папки) и пронумерованный список слов, которые уже есть "
+        "в словаре пользователя. Твоя задача — проанализировать ТОЛЬКО ЭТИ слова и отобрать "
+        "среди них те, что по смыслу относятся к заданной теме. "
+        "ПРАВИЛА:\n"
+        "1. Никогда не придумывай новые слова — используй строго слова из предоставленного списка, "
+        "копируя французское написание слова точно как в списке (посимвольно).\n"
+        "2. Отбирай только слова, которые ДЕЙСТВИТЕЛЬНО относятся к теме по смыслу, "
+        "не притягивай слова искусственно.\n"
+        "3. Если ни одно слово не подходит — верни пустой список.\n"
+        "4. Отсортируй результат от наиболее подходящих к наименее подходящим.\n"
+        "Ответ должен содержать ТОЛЬКО JSON без каких-либо вводных слов или разметки markdown."
+    )
+
+    user_prompt = (
+        f"Тема папки: '{topic}'.\n"
+        f"Список слов из словаря пользователя:\n{numbered_list}\n\n"
+        "Отбери из этого списка французские слова, подходящие теме. "
+        'Структура JSON строго такая: {"matches": ["слово1", "слово2", ...]}. '
+        "В массив matches помещай ТОЛЬКО французские слова, скопированные из списка выше."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+
+        raw_content = response.choices[0].message.content
+        data = json.loads(raw_content)
+        matches = data.get("matches", [])
+
+        # Оставляем только те ответы ИИ, что реально совпадают со словами из списка кандидатов
+        candidates_by_lower = {c.get("french", "").strip().lower(): c.get("french", "") for c in candidates}
+        cleaned = []
+        seen = set()
+        for word in matches:
+            key = (word or "").strip().lower()
+            if key in candidates_by_lower and key not in seen:
+                cleaned.append(candidates_by_lower[key])
+                seen.add(key)
+
+        return cleaned
+
+    except Exception as e:
+        print(f"Ошибка при подборе слов для папки '{topic}': {e}")
+        return []
+
+
 if __name__ == "__main__":
     print("--- Тестирование работы словаря через Нейросеть ---")
     res1 = get_full_word_data("стакан")
