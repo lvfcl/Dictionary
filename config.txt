@@ -1,0 +1,2 @@
+url=https://api.groq.com/openai/v1
+key=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
