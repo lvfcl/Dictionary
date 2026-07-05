@@ -1,4 +1,3 @@
-import os
 import re
 import json
 from openai import OpenAI
@@ -142,12 +141,3 @@ def suggest_matching_words(topic: str, candidates: list):
     except Exception as e:
         print(f"Ошибка при подборе слов для папки '{topic}': {e}")
         return []
-
-
-if __name__ == "__main__":
-    print("--- Тестирование работы словаря через Нейросеть ---")
-    res1 = get_full_word_data("стакан")
-    print(f"Результат для 'стакан':\nСлово: {res1[0]}\nТранскрипция: {res1[1]}\nПеревод: {res1[2]}\nПримеры: {res1[3]}\n")
-    
-    res2 = get_full_word_data("яблоко")
-    print(f"Результат для 'яблоко':\nСлово: {res2[0]}")

@@ -125,7 +125,6 @@ def delete_word(french_word: str) -> bool:
             return False
             
         with open("dictionary.json", "w", encoding="utf-8") as f:
-            import json
             json.dump(filtered_words, f, ensure_ascii=False, indent=4)
         return True
     except Exception as e:
@@ -296,18 +295,3 @@ def save_settings(settings: dict) -> bool:
         print(f"Ошибка при сохранении настроек: {e}")
         return False
 
-
-if __name__ == "__main__":
-    print("--- Тестирование модуля database.py ---")
-    
-    success = save_word("bonjour", "[bɔ̃ʒuʁ]", "здравствуйте")
-    if success:
-        print("Тестовое слово успешно сохранено!")
-    else:
-        print("Тестовое слово не сохранено (возможно, оно уже есть).")
-        
-    current_words = load_words()
-    print(f"Сейчас в базе данных слов: {len(current_words)}")
-    print("Содержимое базы:", current_words)
-
-    

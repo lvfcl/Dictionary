@@ -179,6 +179,17 @@ class GlobalWordCapture(QObject):
         except Exception:
             previous_text = ""
 
+        # В момент срабатывания хоткея Ctrl и Alt еще физически зажаты пользователем.
+        # Если отправить Ctrl+C прямо сейчас, активное приложение может получить
+        # Ctrl+Alt+C вместо обычного "копировать" — и буфер обмена не изменится.
+        # Поэтому сначала явно отпускаем клавиши самого хоткея.
+        for key in ("alt", "ctrl", "d"):
+            try:
+                keyboard.release(key)
+            except Exception:
+                pass
+        time.sleep(0.05)
+
         try:
             keyboard.send("ctrl+c")
         except Exception as e:

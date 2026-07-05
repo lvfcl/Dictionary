@@ -23,11 +23,6 @@ class DictionaryUI(QMainWindow):
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
 
-        # self.title_label = QLabel("")
-        # self.title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        # self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # main_layout.addWidget(self.title_label)
-
         input_layout = QHBoxLayout()
         input_layout.setSpacing(10)
 
@@ -229,12 +224,7 @@ class DictionaryUI(QMainWindow):
                 border-bottom: 1px solid #E0E0E0;
             }
                            
-            QTableWidget::item:hover {
-            background-color: transparent;
-            color: #333333;
-            }
-                           
-            /* Явно убираем любую подсветку при наведении (в т.ч. системную) */
+            /* Убираем подсветку при наведении (в т.ч. системную) */
             QTableWidget::item:hover {
                 background-color: transparent;
                 color: #333333;

@@ -790,11 +790,6 @@ class MainApp(DictionaryUI):
         else:
             self.statusBar().showMessage("Не удалось получить аудио. Проверьте подключение к интернету.", 4000)
 
-    def play_current_word_audio(self):
-        """Воспроизводит произношение слова, выбранного в панели деталей."""
-        self.play_word_audio(self.current_word)
-
-
     def load_folders_list(self):
         """Обновляет список папок в боковой панели."""
         self.folder_list.clear()
