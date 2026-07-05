@@ -109,58 +109,6 @@ class QuickAddPopup(QDialog):
         self.accept()
 
 
-class WordSelectionButton(QDialog):
-    """
-    Маленькая круглая кнопка, которая появляется рядом с курсором сразу после
-    выделения текста мышью в ЛЮБОМ приложении Windows. Один клик — слово
-    переводится и сохраняется в словарь без открытия главного окна программы.
-    Если кнопку проигнорировали — она сама закрывается через несколько секунд.
-    """
-    def __init__(self, word: str, x: int, y: int, main_app):
-        super().__init__(
-            None,
-            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
-        )
-        self.word = word
-        self.main_app = main_app
-
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(40, 40)
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        self.add_btn = QPushButton("+", self)
-        self.add_btn.setFixedSize(40, 40)
-        self.add_btn.setFont(QFont("Arial", 18, QFont.Weight.Bold))
-        self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_btn.setToolTip(f"Добавить «{word}» в словарь")
-        self.add_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2ECC71;
-                color: white;
-                border: none;
-                border-radius: 20px;
-            }
-            QPushButton:hover {
-                background-color: #27AE60;
-            }
-        """)
-        self.add_btn.clicked.connect(self.confirm_add)
-        layout.addWidget(self.add_btn)
-        self.setLayout(layout)
-
-        # Показываем кнопку чуть правее и ниже места, где закончилось выделение
-        self.move(x + 10, y + 10)
-
-        # Автоматически закрываем кнопку, если пользователь ее проигнорировал
-        QTimer.singleShot(4000, self.close)
-
-    def confirm_add(self):
-        self.main_app.quick_add_word(self.word)
-        self.close()
-
-
 class FolderSuggestionThread(QThread):
     """Отдельный поток для запроса к ИИ анализа слов словаря на соответствие теме папки."""
     finished = pyqtSignal(list)
@@ -624,7 +572,7 @@ class MainApp(DictionaryUI):
         self.init_autostart_option()
         self.init_global_hotkey()
         self.init_background_mode_option()
-        self.init_selection_popup_option()
+        self.init_selection_popup()
 
 
     def init_tray_icon(self):
@@ -719,63 +667,27 @@ class MainApp(DictionaryUI):
                 "• Антивирус блокирует перехват клавиатуры — добавьте программу в исключения."
             )
 
-    def init_selection_popup_option(self):
-        """Загружает сохраненную настройку кнопки при выделении и включает/выключает слежение."""
+    def init_selection_popup(self):
+        """Включает слежение за выделением текста мышью в любом приложении Windows."""
         self.selection_watcher = None
 
-        saved_settings = database.load_settings()
-        popup_enabled = saved_settings.get("selection_popup", True)
-
         if sys.platform != "win32":
-            self.selection_popup_checkbox.setChecked(False)
-            self.selection_popup_checkbox.setEnabled(False)
-            self.selection_popup_checkbox.setToolTip("Доступно только на Windows.")
             return
 
         missing = system_integration.get_missing_selection_dependencies()
         if missing:
             packages = " ".join(missing)
-            self.selection_popup_checkbox.setChecked(False)
-            self.selection_popup_checkbox.setEnabled(False)
-            self.selection_popup_checkbox.setToolTip(
-                f"Не установлены пакеты: {packages}. Выполните: pip install {packages}"
-            )
+            print(f"Окошко при выделении текста недоступно: не установлены пакеты {packages}.")
             return
 
-        self.selection_popup_checkbox.setChecked(popup_enabled)
-        self.selection_popup_checkbox.stateChanged.connect(self.toggle_selection_popup)
+        self.selection_watcher = system_integration.SelectionPopupWatcher()
+        self.selection_watcher.word_ready_to_add.connect(self.on_text_selected)        
+        self.selection_watcher.start()
 
-        if popup_enabled:
-            self.apply_selection_popup(True)
-
-    def toggle_selection_popup(self, state):
-        """Включает/выключает автоматическую кнопку при выделении текста и сохраняет выбор."""
-        enabled = (state == Qt.CheckState.Checked.value)
-        self.apply_selection_popup(enabled)
-
-        settings = database.load_settings()
-        settings["selection_popup"] = enabled
-        database.save_settings(settings)
-
-    def apply_selection_popup(self, enabled: bool):
-        """Запускает или останавливает слежение за выделением текста мышью."""
-        if enabled:
-            if not self.selection_watcher:
-                self.selection_watcher = system_integration.SelectionPopupWatcher()
-                self.selection_watcher.text_selected.connect(self.on_text_selected)
-            started = self.selection_watcher.start()
-            if not started:
-                self.statusBar().showMessage("Не удалось включить кнопку при выделении текста.", 4000)
-        else:
-            if self.selection_watcher:
-                self.selection_watcher.stop()
-
-    def on_text_selected(self, word, x, y):
-        """Показывает маленькую круглую кнопку рядом с только что выделенным текстом."""
-        if getattr(self, "_selection_button", None):
-            self._selection_button.close()
-        self._selection_button = WordSelectionButton(word, x, y, self)
-        self._selection_button.show()
+    def on_text_selected(self, word):
+        """Показывает окошко с предложением добавить только что выделенное слово в словарь."""
+        self._selection_popup = QuickAddPopup(word, self)
+        self._selection_popup.show()
 
     def init_background_mode_option(self):
         """Загружает сохраненную настройку фонового режима и применяет её."""

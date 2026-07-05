@@ -2,7 +2,7 @@ import sys
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QLabel, QTextBrowser, QListWidget, QCheckBox)
-from PyQt6.QtCore import Qt, QPropertyAnimation, QPoint, QEasingCurve
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
 class DictionaryUI(QMainWindow):
@@ -64,17 +64,6 @@ class DictionaryUI(QMainWindow):
         self.hotkey_hint_label.setFont(QFont("Arial", 10))
         self.hotkey_hint_label.setStyleSheet("color: #888888;")
         settings_row.addWidget(self.hotkey_hint_label)
-
-        self.selection_popup_checkbox = QCheckBox("Кнопка «+» при выделении слова мышью")
-        self.selection_popup_checkbox.setFont(QFont("Arial", 10))
-        self.selection_popup_checkbox.setStyleSheet("color: #3d4e91;")
-        self.selection_popup_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.selection_popup_checkbox.setToolTip(
-            "Если включено — рядом с курсором появляется маленькая круглая кнопка\n"
-            "сразу после выделения текста мышью в любой программе. Клик по ней\n"
-            "переводит и сохраняет выделенное слово в словарь."
-        )
-        settings_row.addWidget(self.selection_popup_checkbox)
 
         settings_row.addStretch()
         main_layout.addLayout(settings_row)
@@ -365,31 +354,41 @@ class DictionaryUI(QMainWindow):
     
 
 class AnimatedButton(QPushButton):
-    """Кастомная кнопка, которая плавно подпрыгивает при наведении курсора"""
+    """
+    Кнопка с эффектом при наведении курсора.
+
+    Раньше эффект делался через QPropertyAnimation по pos() — кнопка физически
+    сдвигалась вверх на несколько пикселей. Но эта кнопка живет внутри ячейки
+    таблицы (setCellWidget), а QTableWidget сам периодически переустанавливает
+    геометрию своих ячеек (при прокрутке, изменении размеров и т.д.), не зная
+    о нашей анимации. Из-за этого кнопки то "убегали" от курсора, то "проваливались"
+    вниз — ручной сдвиг позиции и автоматическое управление геометрией со стороны
+    таблицы конфликтовали друг с другом.
+
+    Поэтому эффект наведения сделан только через стиль (фон при наведении),
+    без изменения физического положения виджета — это не может конфликтовать
+    с таблицей, так как geometry кнопки вообще не трогается.
+    """
     def __init__(self, text, parent=None):
         super().__init__(text, parent)
-        self.animation = QPropertyAnimation(self, b"pos")
-        self.animation.setDuration(150)
-        self.animation.setEasingCurve(QEasingCurve.Type.OutQuad)
-        self.original_pos = None
+        self._base_style = ""
+        self._hover_style = ""
+
+    def setStyleSheet(self, style: str):
+        # Запоминаем стиль, заданный снаружи (например, "прозрачный фон, без рамки"),
+        # чтобы при наведении добавить к нему подсветку, а не потерять исходный вид.
+        self._base_style = style
+        self._hover_style = style + "\nQPushButton { background-color: rgba(0, 0, 0, 25); border-radius: 4px; }"
+        super().setStyleSheet(style)
 
     def enterEvent(self, event):
-        if self.original_pos is None:
-            self.original_pos = self.pos()
-        
-        self.animation.stop()
-        self.animation.setStartValue(self.pos())
-        self.animation.setEndValue(QPoint(self.original_pos.x(), self.original_pos.y() - 3))
-        self.animation.start()
+        super().setStyleSheet(self._hover_style)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        if self.original_pos is not None:
-            self.animation.stop()
-            self.animation.setStartValue(self.pos())
-            self.animation.setEndValue(self.original_pos)
-            self.animation.start()
+        super().setStyleSheet(self._base_style)
         super().leaveEvent(event)
+
 
 
 if __name__ == "__main__":

@@ -1,18 +1,5 @@
 """
-Модуль системной интеграции для Windows:
-1. Автозапуск программы при включении ПК (через ветку реестра Run).
-2. Глобальная горячая клавиша, которая позволяет добавить в словарь слово,
-   выделенное в ЛЮБОМ приложении Windows (браузер, Word, блокнот и т.д.),
-   без открытия окна программы.
-3. Автоматическая круглая кнопка "Добавить в словарь", которая появляется
-   рядом с курсором сразу после выделения текста мышью в любом приложении.
-
-Технический нюанс: у сторонних приложений нет способа встроить свой пункт
-в системное контекстное меню (ПКМ) чужой программы — это ограничение
-самой Windows. Поэтому используется тот же подход, что и в популярных
-переводчиках: глобальный хук имитирует Ctrl+C для копирования
-выделенного текста, читает буфер обмена и показывает всплывающее окно
-с предложением добавить слово.
+Модуль системной интеграции для Windows с визуальной круглой кнопкой.
 """
 
 import sys
@@ -21,9 +8,6 @@ import time
 
 APP_NAME = "FrenchDictionaryApp"
 DEFAULT_HOTKEY = "ctrl+alt+d"
-
-# Сколько символов допускаем в автоматически выделенном фрагменте: длиннее —
-# это уже не отдельное слово/фраза для словаря, а случайно захваченный абзац.
 MAX_SELECTION_LENGTH = 120
 
 try:
@@ -50,7 +34,9 @@ try:
 except ImportError:
     _MOUSE_AVAILABLE = False
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal, Qt, QTimer
+from PyQt6.QtWidgets import QPushButton, QApplication
+from PyQt6.QtGui import QCursor, QEnterEvent
 
 
 # ------------------------- Автозапуск при включении ПК -------------------------
@@ -60,11 +46,6 @@ def _get_run_registry_path():
 
 
 def _get_startup_command() -> str:
-    """
-    Формирует команду для запуска программы из автозагрузки.
-    Если программа собрана в .exe (например, через PyInstaller) — используется путь к .exe.
-    Если запущена из исходников — используется pythonw.exe (без консольного окна) + путь к скрипту.
-    """
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}"'
 
@@ -78,12 +59,10 @@ def _get_startup_command() -> str:
 
 
 def is_autostart_supported() -> bool:
-    """Автозапуск через реестр поддерживается только в Windows."""
     return sys.platform == "win32" and _WINREG_AVAILABLE
 
 
 def is_autostart_enabled() -> bool:
-    """Проверяет, стоит ли программа сейчас в автозагрузке Windows."""
     if not is_autostart_supported():
         return False
     try:
@@ -91,9 +70,7 @@ def is_autostart_enabled() -> bool:
         with winreg.OpenKey(hive, path, 0, winreg.KEY_READ) as key:
             winreg.QueryValueEx(key, APP_NAME)
         return True
-    except FileNotFoundError:
-        return False
-    except OSError:
+    except (FileNotFoundError, OSError):
         return False
     except Exception as e:
         print(f"Ошибка при проверке автозапуска: {e}")
@@ -101,7 +78,6 @@ def is_autostart_enabled() -> bool:
 
 
 def enable_autostart() -> bool:
-    """Включает автозапуск программы при включении Windows."""
     if not is_autostart_supported():
         return False
     try:
@@ -116,7 +92,6 @@ def enable_autostart() -> bool:
 
 
 def disable_autostart() -> bool:
-    """Отключает автозапуск программы."""
     if not is_autostart_supported():
         return False
     try:
@@ -134,12 +109,10 @@ def disable_autostart() -> bool:
 # ------------------------- Глобальная горячая клавиша -------------------------
 
 def is_global_hotkey_supported() -> bool:
-    """Захват текста из любого приложения работает только на Windows и требует библиотеки keyboard/pyperclip."""
     return sys.platform == "win32" and _KEYBOARD_AVAILABLE and _PYPERCLIP_AVAILABLE
 
 
 def get_missing_dependencies() -> list:
-    """Возвращает названия пакетов, которые нужно установить для работы глобальной горячей клавиши."""
     missing = []
     if not _KEYBOARD_AVAILABLE:
         missing.append("keyboard")
@@ -149,14 +122,6 @@ def get_missing_dependencies() -> list:
 
 
 class GlobalWordCapture(QObject):
-    """
-    Слушает системную горячую клавишу (по умолчанию Ctrl+Alt+D). При нажатии:
-    1. Запоминает текущее содержимое буфера обмена.
-    2. Имитирует Ctrl+C, чтобы скопировать то, что пользователь выделил в активном окне.
-    3. Если буфер обмена изменился — считает это выделенным словом и испускает сигнал
-       word_captured с этим текстом (сигнал безопасно приходит в основной поток Qt,
-       даже если сработал из фонового потока библиотеки keyboard).
-    """
     word_captured = pyqtSignal(str)
 
     def __init__(self, hotkey: str = DEFAULT_HOTKEY):
@@ -165,7 +130,6 @@ class GlobalWordCapture(QObject):
         self._registered = False
 
     def start(self) -> bool:
-        """Регистрирует глобальную горячую клавишу. Возвращает False, если это невозможно."""
         if not is_global_hotkey_supported():
             return False
         try:
@@ -177,7 +141,6 @@ class GlobalWordCapture(QObject):
             return False
 
     def stop(self):
-        """Снимает регистрацию горячей клавиши (вызывать при выходе из программы)."""
         if self._registered:
             try:
                 keyboard.remove_hotkey(self.hotkey)
@@ -191,10 +154,6 @@ class GlobalWordCapture(QObject):
         except Exception:
             previous_text = ""
 
-        # В момент срабатывания хоткея Ctrl и Alt еще физически зажаты пользователем.
-        # Если отправить Ctrl+C прямо сейчас, активное приложение может получить
-        # Ctrl+Alt+C вместо обычного "копировать" — и буфер обмена не изменится.
-        # Поэтому сначала явно отпускаем клавиши самого хоткея.
         for key in ("alt", "ctrl", "d"):
             try:
                 keyboard.release(key)
@@ -208,7 +167,6 @@ class GlobalWordCapture(QObject):
             print(f"Не удалось скопировать выделенный текст: {e}")
             return
 
-        # Небольшая пауза, чтобы активное приложение успело положить текст в буфер обмена
         time.sleep(0.15)
 
         try:
@@ -220,15 +178,84 @@ class GlobalWordCapture(QObject):
             self.word_captured.emit(selected_text)
 
 
-# ------------------------- Кнопка при выделении текста мышью -------------------------
+# ==================== Всплывающая кнопка-кружок ====================
+
+class RoundAddButton(QPushButton):
+    """
+    Маленькая круглая кнопка, которая появляется возле курсора.
+    При клике испускает сигнал с добавленным словом.
+    """
+    clicked_word = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(
+            Qt.WindowType.ToolTip |              # Поверх всех окон, без рамки и иконки в таскбаре
+            Qt.WindowType.FramelessWindowHint |  # Убираем стандартные границы Windows
+            Qt.WindowType.WindowDoesNotAcceptFocus # Не забирает фокус ввода у активного приложения
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) # Прозрачный фон для круга
+        
+        # Размеры кружка (30x30 пикселей)
+        self.setFixedSize(30, 30)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        
+        # Стилизация: синий кружок с белым плюсом (можно изменить под свой дизайн)
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border-radius: 15px; /* Половина от 30px делает виджет круглым */
+                font-size: 18px;
+                font-weight: bold;
+                border: 2px solid white;
+            }
+            QPushButton:hover {
+                background-color: #0B7BDA;
+            }
+        """)
+        self.setText("+")
+        self.current_text = ""
+        
+        # Таймер автоматического скрытия (чтобы кружок исчезал через 3 секунды, если его проигнорировали)
+        self.hide_timer = QTimer(self)
+        self.hide_timer.setSingleShot(True)
+        self.hide_timer.timeout.connect(self.hide)
+        
+        self.clicked.connect(self._on_clicked)
+
+    def show_at(self, text: str, x: int, y: int):
+        """Отображает кнопку чуть правее и выше курсора, чтобы не мешать кликать дальше."""
+        self.current_text = text
+        # Смещение: +15 пикселей вправо, -10 пикселей вверх от кончика курсора
+        self.move(x + 15, y - 10)
+        self.show()
+        self.hide_timer.start(3000) # Исчезнет через 3000 мс (3 секунды)
+
+    def enterEvent(self, event: QEnterEvent):
+        """Если пользователь навел мышь на кружок, отменяем таймер скрытия."""
+        self.hide_timer.stop()
+        super().enterEvent(event)
+
+    def _on_clicked(self):
+        if self.current_text:
+            self.clicked_word.emit(self.current_text)
+        self.hide()
+
+
+# ------------------------- Менеджер выделения текста -------------------------
+
+# Сколько секунд максимум может пройти между двумя кликами ЛКМ, чтобы засчитать их
+# как двойной клик, и на сколько пикселей курсор может сместиться между кликами.
+DOUBLE_CLICK_MAX_INTERVAL = 0.4
+DOUBLE_CLICK_MAX_DISTANCE = 6
+
 
 def is_selection_popup_supported() -> bool:
-    """Автоматическая кнопка при выделении работает только на Windows и требует mouse/keyboard/pyperclip."""
     return sys.platform == "win32" and _MOUSE_AVAILABLE and _KEYBOARD_AVAILABLE and _PYPERCLIP_AVAILABLE
 
 
 def get_missing_selection_dependencies() -> list:
-    """Возвращает названия пакетов, которых не хватает для работы кнопки при выделении текста."""
     missing = []
     if not _MOUSE_AVAILABLE:
         missing.append("mouse")
@@ -241,27 +268,33 @@ def get_missing_selection_dependencies() -> list:
 
 class SelectionPopupWatcher(QObject):
     """
-    Слушает отпускание левой кнопки мыши в ЛЮБОМ приложении Windows. Сразу после
-    отпускания (будь то выделение протяжкой или двойной клик по слову):
-    1. Запоминает текущее содержимое буфера обмена.
-    2. Имитирует Ctrl+C.
-    3. Если буфер обмена изменился на непустой и не слишком длинный текст —
-       считает это выделенным словом/фразой и испускает сигнал text_selected
-       с этим текстом и текущими экранными координатами курсора, чтобы рядом
-       можно было показать маленькую круглую кнопку "Добавить в словарь".
+    Отслеживает выделение мышью и координирует появление круглой кнопки.
     """
-    text_selected = pyqtSignal(str, int, int)
+    # Этот сигнал теперь можно использовать в главном окне приложения:
+    # watcher.word_ready_to_add.connect(self.my_add_to_dictionary_function)
+    word_ready_to_add = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self._hooked = False
+        # Время и координаты предыдущего отпускания ЛКМ — по ним сами определяем двойной клик.
+        self._last_click_time = 0.0
+        self._last_click_pos = (0, 0)
+        # Создаем экземпляр кружка
+        self.popup_button = RoundAddButton()
+        # Связываем клик по кружку с внешним сигналом менеджера
+        self.popup_button.clicked_word.connect(self.word_ready_to_add.emit)
 
     def start(self) -> bool:
-        """Включает слежение за выделением текста. Возвращает False, если это невозможно."""
         if not is_selection_popup_supported():
             return False
         try:
-            mouse.on_button(self._on_mouse_up, buttons=(mouse.LEFT,), types=(mouse.UP,))
+            # Слушаем КАЖДОЕ отпускание ЛКМ и сами решаем, был ли это двойной клик
+            # (по времени и расстоянию между двумя последовательными кликами).
+            # Так одиночный клик гарантированно никогда не запускает копирование —
+            # в отличие от встроенного mouse.on_double_click, поведение которого
+            # мы не контролируем напрямую.
+            mouse.on_button(self._on_left_click, buttons=(mouse.LEFT,), types=(mouse.UP,))
             self._hooked = True
             return True
         except Exception as e:
@@ -269,15 +302,44 @@ class SelectionPopupWatcher(QObject):
             return False
 
     def stop(self):
-        """Отключает слежение за выделением текста (вызывать при выходе из программы)."""
         if self._hooked:
             try:
                 mouse.unhook_all()
             except Exception:
                 pass
             self._hooked = False
+        self.popup_button.close()
 
-    def _on_mouse_up(self):
+    def _on_left_click(self):
+        """Срабатывает на КАЖДОЕ отпускание ЛКМ; действие запускаем только если это второй клик подряд."""
+        now = time.time()
+        try:
+            x, y = mouse.get_position()
+        except Exception:
+            x, y = (0, 0)
+
+        dx = abs(x - self._last_click_pos[0])
+        dy = abs(y - self._last_click_pos[1])
+        is_double_click = (
+            (now - self._last_click_time) <= DOUBLE_CLICK_MAX_INTERVAL
+            and dx <= DOUBLE_CLICK_MAX_DISTANCE
+            and dy <= DOUBLE_CLICK_MAX_DISTANCE
+        )
+
+        self._last_click_time = now
+        self._last_click_pos = (x, y)
+
+        if not is_double_click:
+            # Одиночный клик — просто запоминаем его как возможное "первое нажатие" и выходим.
+            return
+
+        # Обнуляем время, чтобы быстрый третий клик подряд не засчитался
+        # еще одним двойным кликом от того же самого первого нажатия.
+        self._last_click_time = 0.0
+
+        self._on_double_click(x, y)
+
+    def _on_double_click(self, x, y):
         try:
             previous_text = pyperclip.paste()
         except Exception:
@@ -288,7 +350,6 @@ class SelectionPopupWatcher(QObject):
         except Exception:
             return
 
-        # Небольшая пауза, чтобы активное приложение успело положить текст в буфер обмена
         time.sleep(0.15)
 
         try:
@@ -302,9 +363,26 @@ class SelectionPopupWatcher(QObject):
         if len(selected_text) > MAX_SELECTION_LENGTH:
             return
 
-        try:
-            x, y = mouse.get_position()
-        except Exception:
-            return
+        # x, y — координаты курсора в момент самого двойного клика (переданы вызывающим
+        # кодом), а не после паузы в 150мс, за которую курсор мог успеть сместиться.
 
-        self.text_selected.emit(selected_text, x, y)
+        # Вместо простой отправки координат бэкенду, 
+        # мы напрямую заставляем UI-кружок появиться на экране в нужной точке.
+        # Метод вызовется безопасно в контексте потока Qt.
+        QTimer.singleShot(0, lambda: self.popup_button.show_at(selected_text, x, y))
+
+
+# --- Пример для тестирования (можно запустить напрямую этот файл) ---
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    
+    watcher = SelectionPopupWatcher()
+    if watcher.start():
+        print("Слушатель выделения запущен. Выделите текст в любом приложении...")
+        
+        # Тестовый обработчик: покажет в консоли, что слово успешно «перехвачено» кружком
+        watcher.word_ready_to_add.connect(lambda word: print(f"Слово добавлено в словарь: {word}"))
+        
+        sys.exit(app.exec())
+    else:
+        print("Ошибка запуска. Проверьте зависимости:", get_missing_selection_dependencies())
