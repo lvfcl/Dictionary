@@ -1,8 +1,8 @@
 import sys
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QLabel, QTextBrowser)
-from PyQt6.QtCore import Qt
+                             QHeaderView, QLabel, QTextBrowser, QListWidget, QCheckBox)
+from PyQt6.QtCore import Qt, QPropertyAnimation, QPoint, QEasingCurve
 from PyQt6.QtGui import QFont
 
 class DictionaryUI(QMainWindow):
@@ -13,7 +13,7 @@ class DictionaryUI(QMainWindow):
     def init_ui(self):
         """Инициализация всех элементов интерфейса и стилей"""
         self.setWindowTitle("Французский Словарь v1.0")
-        self.resize(1050, 600)
+        self.resize(1250, 600)
         self.setMinimumSize(800, 450)
         
         central_widget = QWidget()
@@ -22,11 +22,6 @@ class DictionaryUI(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
-
-        # self.title_label = QLabel("")
-        # self.title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        # self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # main_layout.addWidget(self.title_label)
 
         input_layout = QHBoxLayout()
         input_layout.setSpacing(10)
@@ -46,24 +41,113 @@ class DictionaryUI(QMainWindow):
         input_layout.addWidget(self.add_button)
         main_layout.addLayout(input_layout)
 
+        settings_row = QHBoxLayout()
+        settings_row.setSpacing(15)
+
+        self.autostart_checkbox = QCheckBox("Запускать при включении ПК")
+        self.autostart_checkbox.setFont(QFont("Arial", 10))
+        self.autostart_checkbox.setStyleSheet("color: #3d4e91;")
+        self.autostart_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        settings_row.addWidget(self.autostart_checkbox)
+
+        self.background_mode_checkbox = QCheckBox("Работать в фоне после закрытия окна")
+        self.background_mode_checkbox.setFont(QFont("Arial", 10))
+        self.background_mode_checkbox.setStyleSheet("color: #3d4e91;")
+        self.background_mode_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.background_mode_checkbox.setToolTip(
+            "Если включено — закрытие окна сворачивает программу в трей, и горячая клавиша\n"
+            "Ctrl+Alt+D продолжает работать. Если выключено — закрытие окна полностью завершает программу."
+        )
+        settings_row.addWidget(self.background_mode_checkbox)
+
+        self.hotkey_hint_label = QLabel("Ctrl+Alt+D — добавить выделенное слово из любой программы")
+        self.hotkey_hint_label.setFont(QFont("Arial", 10))
+        self.hotkey_hint_label.setStyleSheet("color: #888888;")
+        settings_row.addWidget(self.hotkey_hint_label)
+
+        self.selection_popup_checkbox = QCheckBox("Кнопка «+» при выделении слова мышью")
+        self.selection_popup_checkbox.setFont(QFont("Arial", 10))
+        self.selection_popup_checkbox.setStyleSheet("color: #3d4e91;")
+        self.selection_popup_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.selection_popup_checkbox.setToolTip(
+            "Если включено — рядом с курсором появляется маленькая круглая кнопка\n"
+            "сразу после выделения текста мышью в любой программе. Клик по ней\n"
+            "переводит и сохраняет выделенное слово в словарь."
+        )
+        settings_row.addWidget(self.selection_popup_checkbox)
+
+        settings_row.addStretch()
+        main_layout.addLayout(settings_row)
+
         content_layout = QHBoxLayout()
         content_layout.setSpacing(15)
 
+        # --- Панель папок (категорий слов) ---
+        folders_container = QWidget()
+        folders_layout = QVBoxLayout(folders_container)
+        folders_layout.setContentsMargins(0, 0, 0, 0)
+        folders_layout.setSpacing(8)
+
+        folders_title = QLabel("Папки")
+        folders_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        folders_layout.addWidget(folders_title)
+
+        self.folder_list = QListWidget()
+        self.folder_list.setFont(QFont("Arial", 11))
+        folders_layout.addWidget(self.folder_list)
+
+        folder_buttons_row = QHBoxLayout()
+        folder_buttons_row.setSpacing(6)
+
+        self.new_folder_btn = QPushButton("➕")
+        self.new_folder_btn.setToolTip("Создать новую папку")
+        self.new_folder_btn.setFixedHeight(32)
+        self.new_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.delete_folder_btn = QPushButton("🗑")
+        self.delete_folder_btn.setToolTip("Удалить выбранную папку")
+        self.delete_folder_btn.setFixedHeight(32)
+        self.delete_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        folder_buttons_row.addWidget(self.new_folder_btn)
+        folder_buttons_row.addWidget(self.delete_folder_btn)
+        folders_layout.addLayout(folder_buttons_row)
+
+        self.show_all_words_btn = QPushButton("Все слова")
+        self.show_all_words_btn.setFixedHeight(32)
+        self.show_all_words_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        folders_layout.addWidget(self.show_all_words_btn)
+
+        self.populate_folder_btn = QPushButton("Пополнить с ИИ")
+        self.populate_folder_btn.setFixedHeight(36)
+        self.populate_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.populate_folder_btn.setEnabled(False)
+        folders_layout.addWidget(self.populate_folder_btn)
+
+        folders_container.setFixedWidth(200)
+        content_layout.addWidget(folders_container, stretch=0)
+
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Французский", "Транскрипция", "Русский", "", ""])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Французский", "Транскрипция", "Русский", "", "", ""])
         self.table.setFont(QFont("Arial", 11))
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        
+        self.table.setShowGrid(False)
+
         header = self.table.horizontalHeader()
         header.setFont(QFont("Arial", 11, QFont.Weight.Bold))
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setMinimumSectionSize(20)
+
+        self.table.setWordWrap(True)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         
         content_layout.addWidget(self.table, stretch=2)
 
@@ -71,13 +155,6 @@ class DictionaryUI(QMainWindow):
         details_layout = QVBoxLayout(details_container)
         details_layout.setContentsMargins(0, 0, 0, 0)
         details_layout.setSpacing(8)
-
-        self.play_audio_btn = QPushButton("🔊 Прослушать произношение")
-        self.play_audio_btn.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        self.play_audio_btn.setFixedHeight(38)
-        self.play_audio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.play_audio_btn.setEnabled(False)
-        details_layout.addWidget(self.play_audio_btn)
 
         self.details_panel = QTextBrowser()
         self.details_panel.setPlaceholderText("Нажмите на слово в таблице, чтобы увидеть подробную информацию с примерами от ИИ...")
@@ -148,21 +225,27 @@ class DictionaryUI(QMainWindow):
                 alternate-background-color: #F1F5F9;
                 border-radius: 6px;
                 color: #333333;
+                outline: none;
             }
             
             /* Обычные ячейки со словами */
             QTableWidget::item {
                 color: #333333;
                 padding: 5px;
+                border-bottom: 1px solid #E0E0E0;
             }
+                           
+            /* Убираем подсветку при наведении (в т.ч. системную) */
             QTableWidget::item:hover {
-                background-color: #E2E8F0;
-                color: #000000;
+                background-color: transparent;
+                color: #333333;
             }
+
             /* Выделение выбранного слова сочным фиолетовым цветом */
             QTableWidget::item:selected {
                 background-color: #9c23ed;
                 color: #FFFFFF;
+                border-bottom: 1px solid #9c23ed;
             }
             
             /* Шапка таблицы (Французский, Транскрипция, Русский) */
@@ -200,21 +283,6 @@ class DictionaryUI(QMainWindow):
                 border-right: 2px solid #CBD5E1;
             }
             
-            /* Кнопка прослушивания произношения над деталями слова */
-            QPushButton#play_audio_btn_style {
-                background-color: #F0A500;
-            }
-            QPushButton#play_audio_btn_style:hover {
-                background-color: #D6900A;
-            }
-            QPushButton#play_audio_btn_style:pressed {
-                background-color: #B87A00;
-            }
-            QPushButton#play_audio_btn_style:disabled {
-                background-color: #CBD5E1;
-                color: #94A3B8;
-            }
-
             /* Правая HTML панель (Карточка детальной информации) */
             QTextBrowser {
                 border: 1px solid #E0E0E0;
@@ -224,7 +292,6 @@ class DictionaryUI(QMainWindow):
             }
         """)
         self.review_button.setObjectName("review_btn_style")
-        self.play_audio_btn.setObjectName("play_audio_btn_style")
 
     def add_row(self, french: str, transcription: str, russian: str):
         """Вставляет данные в таблицу и генерирует кнопку-крестик в 4-й колонке"""
@@ -243,7 +310,8 @@ class DictionaryUI(QMainWindow):
         self.table.setItem(row_count, 1, item_trans)
         self.table.setItem(row_count, 2, item_ru)
         
-        audio_btn = QPushButton("🔊")
+        audio_btn = AnimatedButton("🔊")
+        audio_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         audio_btn.setFixedWidth(30)
         audio_btn.setFixedHeight(25)
         audio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -253,16 +321,13 @@ class DictionaryUI(QMainWindow):
                 border: none;
                 font-size: 13px;
             }
-            QPushButton:hover {
-                background-color: #DCEBFB;
-                border-radius: 4px;
-            }
         """)
         audio_btn.setProperty("word", french)
         audio_btn.setToolTip("Прослушать произношение")
         self.table.setCellWidget(row_count, 3, audio_btn)
 
-        delete_btn = QPushButton("❌")
+        delete_btn = AnimatedButton("❌")
+        delete_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         delete_btn.setFixedWidth(30)
         delete_btn.setFixedHeight(25)
         delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -270,20 +335,61 @@ class DictionaryUI(QMainWindow):
             QPushButton {
                 background-color: transparent;
                 border: none;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #ff4d4d;
-                border-radius: 4px;
+                font-size: 13px;
             }
         """)
         
         delete_btn.setProperty("word", french)
         
         self.table.setCellWidget(row_count, 4, delete_btn)
+
+        folder_btn = AnimatedButton("📁")
+        folder_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        folder_btn.setFixedWidth(30)
+        folder_btn.setFixedHeight(25)
+        folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        folder_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                font-size: 13px;
+            }
+        """)
+        folder_btn.setProperty("word", french)
+        folder_btn.setToolTip("Добавить слово в папку")
+        self.table.setCellWidget(row_count, 5, folder_btn)
+
         self.table.scrollToItem(item_fr)
         
-        return audio_btn, delete_btn
+        return audio_btn, delete_btn, folder_btn
+    
+
+class AnimatedButton(QPushButton):
+    """Кастомная кнопка, которая плавно подпрыгивает при наведении курсора"""
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.animation = QPropertyAnimation(self, b"pos")
+        self.animation.setDuration(150)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.original_pos = None
+
+    def enterEvent(self, event):
+        if self.original_pos is None:
+            self.original_pos = self.pos()
+        
+        self.animation.stop()
+        self.animation.setStartValue(self.pos())
+        self.animation.setEndValue(QPoint(self.original_pos.x(), self.original_pos.y() - 3))
+        self.animation.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self.original_pos is not None:
+            self.animation.stop()
+            self.animation.setStartValue(self.pos())
+            self.animation.setEndValue(self.original_pos)
+            self.animation.start()
+        super().leaveEvent(event)
 
 
 if __name__ == "__main__":
@@ -292,4 +398,3 @@ if __name__ == "__main__":
     window = DictionaryUI()
     window.show()
     sys.exit(app.exec())
-

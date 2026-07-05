@@ -56,8 +56,3 @@ def delete_audio(word: str):
         except Exception as e:
             print(f"Не удалось удалить аудиофайл '{filepath}': {e}")
 
-
-if __name__ == "__main__":
-    print("--- Тестирование audio_manager.py ---")
-    path = get_audio_path("le chat")
-    print(f"Аудиофайл создан: {path}")

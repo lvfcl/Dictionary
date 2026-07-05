@@ -1,16 +1,22 @@
+import random
 import sys
+import os
 import json
 from datetime import datetime
+from PyQt6.QtWidgets import QInputDialog
 from PyQt6.QtWidgets import (QApplication, QMessageBox, QDialog, QVBoxLayout, 
-                             QHBoxLayout, QLabel, QPushButton, QTextBrowser, QWidget)
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl
-from PyQt6.QtGui import QFont
+                             QHBoxLayout, QLabel, QPushButton, QTextBrowser, QWidget,
+                             QComboBox, QSpinBox, QListWidget, QListWidgetItem,
+                             QSystemTrayIcon, QMenu, QLineEdit, QStyle)
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl, QTimer
+from PyQt6.QtGui import QFont, QAction, QCursor
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from ui_main import DictionaryUI
 import database
 import api_worker
 import audio_manager
+import system_integration
 
 
 class TranslationThread(QThread):
@@ -33,17 +39,407 @@ class TranslationThread(QThread):
             self.error.emit(str(e))
 
 
-import random
-from PyQt6.QtWidgets import QInputDialog
+class QuickAddPopup(QDialog):
+    """
+    Компактное всплывающее окно без рамки, которое появляется рядом с курсором мыши
+    после нажатия глобальной горячей клавиши (Ctrl+Alt+D) в ЛЮБОМ приложении Windows.
+    Позволяет подтвердить или поправить захваченное слово перед добавлением в словарь.
+    """
+    def __init__(self, word: str, main_app):
+        super().__init__(
+            None,
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
+        )
+        self.main_app = main_app
+        self.setFixedSize(300, 120)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #FFFFFF;
+                border: 2px solid #4A90E2;
+                border-radius: 8px;
+            }
+            QLabel { color: #333333; }
+            QLineEdit {
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                padding: 5px;
+                color: #333333;
+            }
+        """)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        title = QLabel("Добавить слово в словарь:")
+        title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        layout.addWidget(title)
+
+        self.word_edit = QLineEdit(word)
+        self.word_edit.setFont(QFont("Arial", 12))
+        self.word_edit.selectAll()
+        layout.addWidget(self.word_edit)
+
+        buttons_layout = QHBoxLayout()
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.clicked.connect(self.reject)
+
+        add_btn = QPushButton("Добавить")
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setStyleSheet("background-color:#2ECC71; color:white; font-weight:bold; border-radius:4px;")
+        add_btn.clicked.connect(self.confirm_add)
+
+        buttons_layout.addWidget(cancel_btn)
+        buttons_layout.addWidget(add_btn)
+        layout.addLayout(buttons_layout)
+
+        self.setLayout(layout)
+
+        # Показываем окно рядом с текущим положением курсора мыши
+        cursor_pos = QCursor.pos()
+        self.move(cursor_pos.x() + 12, cursor_pos.y() + 12)
+
+        # Автоматически закрываем окно, если пользователь его проигнорировал
+        QTimer.singleShot(10000, self.close)
+
+    def confirm_add(self):
+        word = self.word_edit.text().strip()
+        if word:
+            self.main_app.quick_add_word(word)
+        self.accept()
+
+
+class WordSelectionButton(QDialog):
+    """
+    Маленькая круглая кнопка, которая появляется рядом с курсором сразу после
+    выделения текста мышью в ЛЮБОМ приложении Windows. Один клик — слово
+    переводится и сохраняется в словарь без открытия главного окна программы.
+    Если кнопку проигнорировали — она сама закрывается через несколько секунд.
+    """
+    def __init__(self, word: str, x: int, y: int, main_app):
+        super().__init__(
+            None,
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
+        )
+        self.word = word
+        self.main_app = main_app
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(40, 40)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.add_btn = QPushButton("+", self)
+        self.add_btn.setFixedSize(40, 40)
+        self.add_btn.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_btn.setToolTip(f"Добавить «{word}» в словарь")
+        self.add_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2ECC71;
+                color: white;
+                border: none;
+                border-radius: 20px;
+            }
+            QPushButton:hover {
+                background-color: #27AE60;
+            }
+        """)
+        self.add_btn.clicked.connect(self.confirm_add)
+        layout.addWidget(self.add_btn)
+        self.setLayout(layout)
+
+        # Показываем кнопку чуть правее и ниже места, где закончилось выделение
+        self.move(x + 10, y + 10)
+
+        # Автоматически закрываем кнопку, если пользователь ее проигнорировал
+        QTimer.singleShot(4000, self.close)
+
+    def confirm_add(self):
+        self.main_app.quick_add_word(self.word)
+        self.close()
+
+
+class FolderSuggestionThread(QThread):
+    """Отдельный поток для запроса к ИИ анализа слов словаря на соответствие теме папки."""
+    finished = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self, topic, candidates):
+        super().__init__()
+        self.topic = topic
+        self.candidates = candidates
+
+    def run(self):
+        try:
+            result = api_worker.suggest_matching_words(self.topic, self.candidates)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class FolderSuggestionDialog(QDialog):
+    """
+    Показывает слова, отобранные ИИ из уже существующего словаря пользователя (как
+    подходящие по теме папки), по одному: пользователь решает, добавить слово
+    в папку или пропустить его.
+    """
+    def __init__(self, suggestions, folder_name, parent=None):
+        super().__init__(parent)
+        self.folder_name = folder_name
+        self.queue = list(suggestions)
+        self.added_count = 0
+        self.current = None
+
+        self.setWindowTitle(f"Подходящие слова для папки «{folder_name}»")
+        self.resize(480, 400)
+
+        self.init_ui()
+        self.next_word()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        self.counter_label = QLabel(self)
+        self.counter_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        layout.addWidget(self.counter_label)
+
+        self.word_label = QLabel(self)
+        self.word_label.setFont(QFont("Arial", 22, QFont.Weight.Bold))
+        self.word_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.word_label)
+
+        self.trans_label = QLabel(self)
+        self.trans_label.setFont(QFont("Arial", 13))
+        self.trans_label.setStyleSheet("color: gray;")
+        self.trans_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.trans_label)
+
+        self.ru_label = QLabel(self)
+        self.ru_label.setFont(QFont("Arial", 16))
+        self.ru_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.ru_label)
+
+        self.examples_browser = QTextBrowser(self)
+        self.examples_browser.setMaximumHeight(140)
+        layout.addWidget(self.examples_browser)
+
+        buttons_layout = QHBoxLayout()
+
+        self.reject_btn = QPushButton("❌ Пропустить", self)
+        self.reject_btn.setFixedHeight(42)
+        self.reject_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reject_btn.setStyleSheet(
+            "background-color:#ff4d4d; color:white; font-weight:bold; border-radius:4px;"
+        )
+        self.reject_btn.clicked.connect(self.reject_current)
+
+        self.accept_btn = QPushButton("✔ Добавить в папку", self)
+        self.accept_btn.setFixedHeight(42)
+        self.accept_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.accept_btn.setStyleSheet(
+            "background-color:#2ECC71; color:white; font-weight:bold; border-radius:4px;"
+        )
+        self.accept_btn.clicked.connect(self.accept_current)
+
+        buttons_layout.addWidget(self.reject_btn)
+        buttons_layout.addWidget(self.accept_btn)
+        layout.addLayout(buttons_layout)
+
+        self.setLayout(layout)
+
+    def next_word(self):
+        """Показывает следующее слово из очереди подобранных ИИ кандидатов."""
+        if not self.queue:
+            QMessageBox.information(
+                self, "Готово",
+                f"Просмотр завершен. Добавлено в папку «{self.folder_name}»: {self.added_count}."
+            )
+            self.accept()
+            return
+
+        self.counter_label.setText(f"Осталось предложений: {len(self.queue)}")
+        self.current = self.queue.pop(0)
+
+        self.word_label.setText(self.current.get("french", ""))
+        self.trans_label.setText(self.current.get("transcription", ""))
+        self.ru_label.setText(self.current.get("russian", ""))
+
+        examples_text = ""
+        for ex in self.current.get("examples", []):
+            examples_text += f"<b>FR:</b> {ex.get('fr', '')}<br><b>RU:</b> {ex.get('ru', '')}<br><br>"
+        self.examples_browser.setHtml(examples_text if examples_text else "Примеров нет.")
+
+    def accept_current(self):
+        """Добавляет уже существующее в словаре слово в текущую папку (новая карточка не создается)."""
+        if not self.current:
+            return
+
+        added = database.add_word_to_folder(self.current.get("french", ""), self.folder_name)
+        if added:
+            self.added_count += 1
+
+        self.next_word()
+
+    def reject_current(self):
+        """Пропускает предложенное слово без добавления в папку."""
+        self.next_word()
+
+
+class AssignFolderDialog(QDialog):
+    """Позволяет вручную отметить, в каких папках должно находиться конкретное слово."""
+    def __init__(self, french_word, parent=None):
+        super().__init__(parent)
+        self.french_word = french_word
+        self.all_folders = database.load_folders()
+        self.word_folders = set(database.get_word_folders(french_word))
+
+        self.setWindowTitle(f"Папки для слова «{french_word}»")
+        self.resize(320, 380)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        info_label = QLabel("Отметьте папки, в которые нужно добавить слово:")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        self.list_widget = QListWidget()
+        for folder_name in self.all_folders:
+            item = QListWidgetItem(folder_name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if folder_name in self.word_folders else Qt.CheckState.Unchecked
+            )
+            self.list_widget.addItem(item)
+        layout.addWidget(self.list_widget)
+
+        if not self.all_folders:
+            empty_label = QLabel("Папок пока нет. Сначала создайте папку в левой панели.")
+            empty_label.setStyleSheet("color: gray;")
+            empty_label.setWordWrap(True)
+            layout.addWidget(empty_label)
+
+        buttons_layout = QHBoxLayout()
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn = QPushButton("Сохранить")
+        save_btn.setStyleSheet("background-color:#4A90E2; color:white; font-weight:bold;")
+        save_btn.clicked.connect(self.save_and_close)
+        buttons_layout.addWidget(cancel_btn)
+        buttons_layout.addWidget(save_btn)
+        layout.addLayout(buttons_layout)
+
+        self.setLayout(layout)
+
+    def save_and_close(self):
+        """Применяет изменения: слово добавляется/убирается из отмеченных/снятых папок."""
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            folder_name = item.text()
+            is_checked = item.checkState() == Qt.CheckState.Checked
+            was_checked = folder_name in self.word_folders
+
+            if is_checked and not was_checked:
+                database.add_word_to_folder(self.french_word, folder_name)
+            elif not is_checked and was_checked:
+                database.remove_word_from_folder(self.french_word, folder_name)
+
+        self.accept()
+
+
+class ReviewSetupDialog(QDialog):
+    """Диалог выбора источника слов (все слова или конкретная папка) и размера колоды."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.selected_folder = None
+        self.selected_count = 0
+
+        self.setWindowTitle("Настройка сессии повторения")
+        self.resize(360, 200)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        layout.addWidget(QLabel("Откуда брать слова:"))
+
+        self.source_combo = QComboBox()
+        self.source_combo.addItem("Все слова")
+        self.source_combo.addItems(database.load_folders())
+        self.source_combo.currentIndexChanged.connect(self.update_due_count)
+        layout.addWidget(self.source_combo)
+
+        self.due_label = QLabel()
+        layout.addWidget(self.due_label)
+
+        layout.addWidget(QLabel("Сколько слов взять в колоду:"))
+
+        self.count_spin = QSpinBox()
+        self.count_spin.setMinimum(1)
+        layout.addWidget(self.count_spin)
+
+        buttons_layout = QHBoxLayout()
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.clicked.connect(self.reject)
+        start_btn = QPushButton("Начать")
+        start_btn.setStyleSheet("background-color:#2ECC71; color:white; font-weight:bold;")
+        start_btn.clicked.connect(self.try_accept)
+        buttons_layout.addWidget(cancel_btn)
+        buttons_layout.addWidget(start_btn)
+        layout.addLayout(buttons_layout)
+
+        self.setLayout(layout)
+        self.update_due_count()
+
+    def get_due_words(self):
+        """Возвращает слова, готовые к повторению сегодня, из выбранного источника."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        source = self.source_combo.currentText()
+
+        if source == "Все слова":
+            all_words = database.load_words()
+        else:
+            all_words = database.get_words_by_folder(source)
+
+        return [w for w in all_words if w.get("next_review", today_str) <= today_str]
+
+    def update_due_count(self):
+        """Обновляет счетчик доступных карточек при смене источника."""
+        due_count = len(self.get_due_words())
+        self.due_label.setText(f"Доступно карточек для повторения: {due_count}")
+        self.count_spin.setMaximum(max(due_count, 1))
+        self.count_spin.setValue(min(20, due_count) if due_count else 1)
+        self.count_spin.setEnabled(due_count > 0)
+
+    def try_accept(self):
+        due_count = len(self.get_due_words())
+        if due_count == 0:
+            QMessageBox.information(
+                self, "Готово!", "На сегодня нет слов для повторения в этой колоде. Отдыхайте!"
+            )
+            return
+
+        source = self.source_combo.currentText()
+        self.selected_folder = None if source == "Все слова" else source
+        self.selected_count = self.count_spin.value()
+        self.accept()
+
 
 class ReviewDialog(QDialog):
     """Диалоговое окно для интервального повторения слов (Режим Anki)"""
-    def __init__(self, limit_count, parent=None):
+    def __init__(self, limit_count, folder_name=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Интервальное повторение (Anki)")
         self.resize(500, 400)
         
-        all_words = database.load_words()
+        if folder_name:
+            all_words = database.get_words_by_folder(folder_name)
+        else:
+            all_words = database.load_words()
+
         today_str = datetime.now().strftime("%Y-%m-%d")
         
         due_words = [w for w in all_words if w.get("next_review", today_str) <= today_str]
@@ -203,6 +599,7 @@ class MainApp(DictionaryUI):
         super().__init__()
         
         self.current_word = ""
+        self.active_folder = None
         self.media_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.media_player.setAudioOutput(self.audio_output)
@@ -214,9 +611,286 @@ class MainApp(DictionaryUI):
         
         self.table.itemClicked.connect(self.show_word_details)
 
-        self.play_audio_btn.clicked.connect(self.play_current_word_audio)
-        
+        self.folder_list.itemClicked.connect(self.on_folder_selected)
+        self.new_folder_btn.clicked.connect(self.create_new_folder)
+        self.delete_folder_btn.clicked.connect(self.delete_selected_folder)
+        self.show_all_words_btn.clicked.connect(self.show_all_words)
+        self.populate_folder_btn.clicked.connect(self.open_ai_populate_dialog)
+
+        self.load_folders_list()
         self.load_saved_data()
+
+        self.init_tray_icon()
+        self.init_autostart_option()
+        self.init_global_hotkey()
+        self.init_background_mode_option()
+        self.init_selection_popup_option()
+
+
+    def init_tray_icon(self):
+        """Создает иконку в системном трее, чтобы программа могла тихо работать в фоне."""
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogListView))
+        self.tray_icon.setToolTip("Французский словарь")
+
+        tray_menu = QMenu()
+
+        show_action = QAction("Открыть словарь", self)
+        show_action.triggered.connect(self.show_from_tray)
+        tray_menu.addAction(show_action)
+
+        tray_menu.addSeparator()
+
+        quit_action = QAction("Выход", self)
+        quit_action.triggered.connect(self.quit_app)
+        tray_menu.addAction(quit_action)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self.on_tray_activated)
+        self.tray_icon.show()
+
+    def init_autostart_option(self):
+        """Синхронизирует флажок автозапуска с текущим состоянием реестра Windows."""
+        if not system_integration.is_autostart_supported():
+            self.autostart_checkbox.setEnabled(False)
+            self.autostart_checkbox.setToolTip("Автозапуск поддерживается только в Windows.")
+            return
+
+        self.autostart_checkbox.setChecked(system_integration.is_autostart_enabled())
+        self.autostart_checkbox.stateChanged.connect(self.toggle_autostart)
+
+    def toggle_autostart(self, state):
+        """Включает или отключает автозапуск программы вместе с Windows."""
+        want_enabled = (state == Qt.CheckState.Checked.value)
+
+        if want_enabled:
+            success = system_integration.enable_autostart()
+            message = "Автозапуск включен." if success else "Не удалось включить автозапуск."
+        else:
+            success = system_integration.disable_autostart()
+            message = "Автозапуск отключен." if success else "Не удалось отключить автозапуск."
+
+        if not success:
+            QMessageBox.warning(self, "Ошибка автозапуска", message)
+            self.autostart_checkbox.blockSignals(True)
+            self.autostart_checkbox.setChecked(not want_enabled)
+            self.autostart_checkbox.blockSignals(False)
+        else:
+            self.statusBar().showMessage(message, 4000)
+
+    def init_global_hotkey(self):
+        """Регистрирует глобальную горячую клавишу для добавления слова из любого приложения."""
+        self.word_capture = None
+
+        if sys.platform != "win32":
+            self.hotkey_hint_label.setText("Быстрое добавление горячей клавишей доступно только на Windows.")
+            return
+
+        missing = system_integration.get_missing_dependencies()
+
+        if missing:
+            packages = " ".join(missing)
+            self.hotkey_hint_label.setText(
+                f"Горячая клавиша Ctrl+Alt+D не работает: не установлены пакеты {packages}."
+            )
+            QMessageBox.warning(
+                self, "Горячая клавиша недоступна",
+                "Ctrl+Alt+D не работает, потому что не установлены необходимые библиотеки.\n\n"
+                f"Откройте командную строку и выполните:\n\npip install {packages}\n\n"
+                "После установки перезапустите программу."
+            )
+            return
+
+        self.word_capture = system_integration.GlobalWordCapture()
+        self.word_capture.word_captured.connect(self.on_global_word_captured)
+        registered = self.word_capture.start()
+
+        if not registered:
+            self.hotkey_hint_label.setText(
+                "Не удалось зарегистрировать Ctrl+Alt+D (конфликт с другой программой или нужны права администратора)."
+            )
+            QMessageBox.warning(
+                self, "Не удалось включить горячую клавишу",
+                "Не получилось зарегистрировать сочетание Ctrl+Alt+D.\n\n"
+                "Возможные причины:\n"
+                "• Это сочетание уже занято другой программой.\n"
+                "• Нужно запустить программу от имени администратора "
+                "(некоторые системы блокируют низкоуровневый перехват клавиш для обычных пользователей).\n"
+                "• Антивирус блокирует перехват клавиатуры — добавьте программу в исключения."
+            )
+
+    def init_selection_popup_option(self):
+        """Загружает сохраненную настройку кнопки при выделении и включает/выключает слежение."""
+        self.selection_watcher = None
+
+        saved_settings = database.load_settings()
+        popup_enabled = saved_settings.get("selection_popup", True)
+
+        if sys.platform != "win32":
+            self.selection_popup_checkbox.setChecked(False)
+            self.selection_popup_checkbox.setEnabled(False)
+            self.selection_popup_checkbox.setToolTip("Доступно только на Windows.")
+            return
+
+        missing = system_integration.get_missing_selection_dependencies()
+        if missing:
+            packages = " ".join(missing)
+            self.selection_popup_checkbox.setChecked(False)
+            self.selection_popup_checkbox.setEnabled(False)
+            self.selection_popup_checkbox.setToolTip(
+                f"Не установлены пакеты: {packages}. Выполните: pip install {packages}"
+            )
+            return
+
+        self.selection_popup_checkbox.setChecked(popup_enabled)
+        self.selection_popup_checkbox.stateChanged.connect(self.toggle_selection_popup)
+
+        if popup_enabled:
+            self.apply_selection_popup(True)
+
+    def toggle_selection_popup(self, state):
+        """Включает/выключает автоматическую кнопку при выделении текста и сохраняет выбор."""
+        enabled = (state == Qt.CheckState.Checked.value)
+        self.apply_selection_popup(enabled)
+
+        settings = database.load_settings()
+        settings["selection_popup"] = enabled
+        database.save_settings(settings)
+
+    def apply_selection_popup(self, enabled: bool):
+        """Запускает или останавливает слежение за выделением текста мышью."""
+        if enabled:
+            if not self.selection_watcher:
+                self.selection_watcher = system_integration.SelectionPopupWatcher()
+                self.selection_watcher.text_selected.connect(self.on_text_selected)
+            started = self.selection_watcher.start()
+            if not started:
+                self.statusBar().showMessage("Не удалось включить кнопку при выделении текста.", 4000)
+        else:
+            if self.selection_watcher:
+                self.selection_watcher.stop()
+
+    def on_text_selected(self, word, x, y):
+        """Показывает маленькую круглую кнопку рядом с только что выделенным текстом."""
+        if getattr(self, "_selection_button", None):
+            self._selection_button.close()
+        self._selection_button = WordSelectionButton(word, x, y, self)
+        self._selection_button.show()
+
+    def init_background_mode_option(self):
+        """Загружает сохраненную настройку фонового режима и применяет её."""
+        saved_settings = database.load_settings()
+        background_enabled = saved_settings.get("background_mode", True)
+
+        self.background_mode_checkbox.setChecked(background_enabled)
+        self.background_mode_checkbox.stateChanged.connect(self.toggle_background_mode)
+        self.apply_background_mode(background_enabled, initial=True)
+
+    def toggle_background_mode(self, state):
+        """Включает/выключает фоновый режим (работу программы после закрытия окна) и сохраняет выбор."""
+        enabled = (state == Qt.CheckState.Checked.value)
+        self.apply_background_mode(enabled)
+
+        settings = database.load_settings()
+        settings["background_mode"] = enabled
+        database.save_settings(settings)
+
+    def apply_background_mode(self, enabled: bool, initial: bool = False):
+        """
+        Применяет режим фоновой работы:
+        - enabled=True: закрытие окна сворачивает программу в трей, приложение не завершается,
+          горячая клавиша Ctrl+Alt+D продолжает работать.
+        - enabled=False: закрытие окна полностью завершает программу (обычное поведение).
+        """
+        self.background_mode = enabled
+        QApplication.instance().setQuitOnLastWindowClosed(not enabled)
+
+        if not initial:
+            if enabled:
+                self.statusBar().showMessage(
+                    "Фоновый режим включен: при закрытии окно будет сворачиваться в трей.", 4000
+                )
+            else:
+                self.statusBar().showMessage(
+                    "Фоновый режим отключен: закрытие окна теперь полностью завершает программу.", 4000
+                )
+
+    def on_global_word_captured(self, word):
+        """Показывает всплывающее окно рядом с курсором для подтверждения добавления слова."""
+        self._quick_add_popup = QuickAddPopup(word, self)
+        self._quick_add_popup.show()
+
+    def quick_add_word(self, word):
+        """Запускает перевод и сохранение слова, захваченного глобальной горячей клавишей."""
+        self.quick_worker = TranslationThread(word)
+        self.quick_worker.finished.connect(self.on_quick_add_finished)
+        self.quick_worker.error.connect(self.on_quick_add_error)
+        self.quick_worker.start()
+
+    def on_quick_add_finished(self, result):
+        """Сохраняет слово, добавленное через глобальную горячую клавишу, и уведомляет пользователя через трей."""
+        fr_word, transcription, ru_word, examples = result
+        target_folders = [self.active_folder] if self.active_folder else None
+        is_saved = database.save_word(fr_word, transcription, ru_word, examples, folders=target_folders)
+
+        if is_saved:
+            audio_manager.get_audio_path(fr_word)
+            self.tray_icon.showMessage(
+                "Слово добавлено", f"{fr_word} — {ru_word}",
+                QSystemTrayIcon.MessageIcon.Information, 3000
+            )
+            if self.isVisible():
+                self.load_saved_data()
+        else:
+            self.tray_icon.showMessage(
+                "Уже есть в словаре", f"«{fr_word}» уже есть в вашем словаре.",
+                QSystemTrayIcon.MessageIcon.Information, 3000
+            )
+
+    def on_quick_add_error(self, error_message):
+        self.tray_icon.showMessage("Ошибка добавления слова", error_message, QSystemTrayIcon.MessageIcon.Warning, 4000)
+
+    def on_tray_activated(self, reason):
+        """Разворачивает окно программы по клику/двойному клику на иконку в трее."""
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self.show_from_tray()
+
+    def show_from_tray(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def quit_app(self):
+        """Полностью закрывает программу (в отличие от закрытия окна, которое сворачивает в трей)."""
+        if getattr(self, "word_capture", None):
+            self.word_capture.stop()
+        if getattr(self, "selection_watcher", None):
+            self.selection_watcher.stop()
+        self.tray_icon.hide()
+        QApplication.quit()
+
+    def closeEvent(self, event):
+        """
+        Если включен фоновый режим — закрытие окна крестиком сворачивает программу в трей,
+        и горячая клавиша Ctrl+Alt+D продолжает работать. Если фоновый режим выключен —
+        закрытие окна полностью завершает программу (обычное поведение).
+        """
+        if getattr(self, "background_mode", True):
+            event.ignore()
+            self.hide()
+            self.tray_icon.showMessage(
+                "Словарь свернут в трей",
+                "Программа продолжает работать в фоне. Ctrl+Alt+D добавит выделенное слово из любого приложения.",
+                QSystemTrayIcon.MessageIcon.Information,
+                4000
+            )
+        else:
+            if getattr(self, "word_capture", None):
+                self.word_capture.stop()
+            if getattr(self, "selection_watcher", None):
+                self.selection_watcher.stop()
+            self.tray_icon.hide()
+            event.accept()
 
     def play_word_audio(self, word: str):
         """Генерирует (если нужно) и воспроизводит произношение указанного слова."""
@@ -231,9 +905,132 @@ class MainApp(DictionaryUI):
         else:
             self.statusBar().showMessage("Не удалось получить аудио. Проверьте подключение к интернету.", 4000)
 
-    def play_current_word_audio(self):
-        """Воспроизводит произношение слова, выбранного в панели деталей."""
-        self.play_word_audio(self.current_word)
+    def load_folders_list(self):
+        """Обновляет список папок в боковой панели."""
+        self.folder_list.clear()
+        for folder_name in database.load_folders():
+            self.folder_list.addItem(folder_name)
+
+    def create_new_folder(self):
+        """Запрашивает название и создает новую папку."""
+        name, ok = QInputDialog.getText(self, "Новая папка", "Название папки (например, «Еда», «Путешествия»):")
+        if ok and name.strip():
+            if database.create_folder(name.strip()):
+                self.load_folders_list()
+                self.statusBar().showMessage(f"Папка '{name.strip()}' создана.")
+            else:
+                QMessageBox.information(self, "Внимание", f"Папка '{name.strip()}' уже существует.")
+
+    def delete_selected_folder(self):
+        """Удаляет выбранную папку (слова из словаря не удаляются)."""
+        item = self.folder_list.currentItem()
+        if not item:
+            QMessageBox.information(self, "Внимание", "Сначала выберите папку для удаления.")
+            return
+
+        folder_name = item.text()
+        reply = QMessageBox.question(
+            self, "Удаление папки",
+            f"Удалить папку <b>{folder_name}</b>? Слова из словаря удалены не будут.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            database.delete_folder(folder_name)
+            if self.active_folder == folder_name:
+                self.active_folder = None
+                self.populate_folder_btn.setEnabled(False)
+            self.load_folders_list()
+            self.load_saved_data()
+            self.statusBar().showMessage(f"Папка '{folder_name}' удалена.")
+
+    def on_folder_selected(self, item):
+        """Фильтрует таблицу слов по выбранной папке."""
+        self.active_folder = item.text()
+        self.populate_folder_btn.setEnabled(True)
+        self.load_saved_data()
+
+    def show_all_words(self):
+        """Сбрасывает фильтр по папке и показывает весь словарь."""
+        self.active_folder = None
+        self.folder_list.clearSelection()
+        self.populate_folder_btn.setEnabled(False)
+        self.load_saved_data()
+
+    def on_folder_button_clicked(self):
+        """Открывает диалог ручного добавления/удаления слова из папок."""
+        button = self.sender()
+        if not button:
+            return
+
+        french_word = button.property("word")
+        dialog = AssignFolderDialog(french_word, self)
+        if dialog.exec():
+            self.load_saved_data()
+
+    def open_ai_populate_dialog(self):
+        """Запускает анализ ИИ: какие из уже сохраненных слов подходят по теме текущей папки."""
+        if not self.active_folder:
+            return
+
+        all_words = database.load_words()
+        candidates = [
+            {"french": w.get("french", ""), "russian": w.get("russian", "")}
+            for w in all_words
+            if self.active_folder not in w.get("folders", []) and w.get("french")
+        ]
+
+        if not candidates:
+            QMessageBox.information(
+                self, "Нечего анализировать",
+                "Все слова из вашего словаря уже добавлены в эту папку (либо словарь пуст)."
+            )
+            return
+
+        self.populate_folder_btn.setEnabled(False)
+        self.populate_folder_btn.setText("Анализирую...")
+
+        self.suggestion_worker = FolderSuggestionThread(self.active_folder, candidates)
+        self.suggestion_worker.finished.connect(self.on_suggestions_ready)
+        self.suggestion_worker.error.connect(self.on_suggestions_error)
+        self.suggestion_worker.start()
+
+    def on_suggestions_ready(self, matched_french_words):
+        """Открывает диалог поочередного просмотра слов словаря, подходящих по теме папки."""
+        self.populate_folder_btn.setEnabled(True)
+        self.populate_folder_btn.setText("Пополнить с ИИ")
+
+        if not matched_french_words:
+            QMessageBox.information(
+                self, "Нет результатов",
+                "ИИ не нашел среди слов вашего словаря подходящих по смыслу для этой папки."
+            )
+            return
+
+        # Собираем полные карточки (транскрипция, перевод, примеры) для отобранных ИИ слов
+        all_words_by_french = {w.get("french", "").lower(): w for w in database.load_words()}
+        full_matches = []
+        for french_word in matched_french_words:
+            card = all_words_by_french.get(french_word.lower())
+            if card:
+                full_matches.append(card)
+
+        if not full_matches:
+            QMessageBox.information(
+                self, "Нет результатов",
+                "ИИ не нашел среди слов вашего словаря подходящих по смыслу для этой папки."
+            )
+            return
+
+        dialog = FolderSuggestionDialog(full_matches, self.active_folder, self)
+        dialog.exec()
+        self.load_saved_data()
+
+    def on_suggestions_error(self, error_message):
+        self.populate_folder_btn.setEnabled(True)
+        self.populate_folder_btn.setText("Пополнить с ИИ")
+        QMessageBox.warning(self, "Ошибка анализа слов", error_message)
 
     def on_delete_button_clicked(self):
         """Определяет, у какого слова был нажат крестик, и запускает удаление"""
@@ -255,7 +1052,6 @@ class MainApp(DictionaryUI):
                     self.load_saved_data()
                     self.details_panel.clear()
                     self.current_word = ""
-                    self.play_audio_btn.setEnabled(False)
                     self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
                 else:
                     QMessageBox.warning(self, "Ошибка", "Не удалось удалить слово из базы данных.")
@@ -293,24 +1089,28 @@ class MainApp(DictionaryUI):
                 if hasattr(self, 'details_panel'):
                     self.details_panel.clear()
                     self.current_word = ""
-                    self.play_audio_btn.setEnabled(False)
                     
                 self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
             else:
                 QMessageBox.warning(self, "Ошибка", "Не удалось удалить слово из базы данных.")
 
     def load_saved_data(self):
-        """Загружает слова из файла JSON и выводит их в таблицу при запуске."""
-        words = database.load_words()
+        """Загружает слова из файла JSON (либо из активной папки) и выводит их в таблицу."""
+        if self.active_folder:
+            words = database.get_words_by_folder(self.active_folder)
+        else:
+            words = database.load_words()
+
         self.table.setRowCount(0)
         for word in words:
             fr = word.get("french", "")
             trans = word.get("transcription", "")
             ru = word.get("russian", "")
             if fr:
-                audio_btn, delete_btn = self.add_row(fr, trans, ru)
+                audio_btn, delete_btn, folder_btn = self.add_row(fr, trans, ru)
                 audio_btn.clicked.connect(lambda checked, w=fr: self.play_word_audio(w))
                 delete_btn.clicked.connect(self.on_delete_button_clicked)
+                folder_btn.clicked.connect(self.on_folder_button_clicked)
 
     def start_translation(self):
         """Запускает процесс перевода в фоновом режиме."""
@@ -330,14 +1130,17 @@ class MainApp(DictionaryUI):
     def on_translation_success(self, result):
         """Срабатывает, когда API успешно вернул данные слова."""
         fr_word, transcription, ru_word, examples = result
-        is_saved = database.save_word(fr_word, transcription, ru_word, examples)
+
+        # Если сейчас открыта конкретная папка, новое слово сразу помещается в нее
+        target_folders = [self.active_folder] if self.active_folder else None
+        is_saved = database.save_word(fr_word, transcription, ru_word, examples, folders=target_folders)
         
         if is_saved:
-            audio_btn, delete_btn = self.add_row(fr_word, transcription, ru_word)
+            audio_btn, delete_btn, folder_btn = self.add_row(fr_word, transcription, ru_word)
             audio_btn.clicked.connect(lambda checked, w=fr_word: self.play_word_audio(w))
             delete_btn.clicked.connect(self.on_delete_button_clicked)
+            folder_btn.clicked.connect(self.on_folder_button_clicked)
             self.render_details_html(fr_word, transcription, ru_word, examples)
-            # Заранее генерируем и кэшируем аудио для нового слова
             audio_manager.get_audio_path(fr_word)
         else:
             QMessageBox.information(self, "Внимание", f"Слово '{fr_word}' уже есть в вашем словаре!")
@@ -356,26 +1159,10 @@ class MainApp(DictionaryUI):
         self.word_input.setFocus()
 
     def open_review_mode(self):
-        """Запрашивает количество карточек и открывает диалоговое окно режима заучивания."""
-        all_words = database.load_words()
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        due_count = len([w for w in all_words if w.get("next_review", today_str) <= today_str])
-        
-        if due_count == 0:
-            QMessageBox.information(self, "Готово!", "На сегодня нет слов для повторения. Отдыхайте!")
-            return
-
-        limit, ok = QInputDialog.getInt(
-            self, 
-            "Размер колоды", 
-            f"Доступно карточек для повторения: {due_count}\nСколько карточек взять в колоду?", 
-            value=min(20, due_count),
-            min=1, 
-            max=due_count
-        )
-        
-        if ok:
-            dialog = ReviewDialog(limit, self)
+        """Открывает диалог выбора источника слов (все / папка) и количества, затем запускает сессию повторения."""
+        setup_dialog = ReviewSetupDialog(self)
+        if setup_dialog.exec():
+            dialog = ReviewDialog(setup_dialog.selected_count, setup_dialog.selected_folder, self)
             dialog.exec()
             self.load_saved_data()
 
@@ -398,7 +1185,6 @@ class MainApp(DictionaryUI):
     def render_details_html(self, word, transcription, translation, examples):
         """Генерирует HTML-разметку для боковой панели описания слова."""
         self.current_word = word
-        self.play_audio_btn.setEnabled(bool(word))
 
         html = f"""
         <div style="font-family: Arial, sans-serif; padding: 10px;">
@@ -432,7 +1218,17 @@ class MainApp(DictionaryUI):
 
 
 if __name__ == "__main__":
+    # Гарантируем, что относительные пути (dictionary.json, folders.json, audio_cache)
+    # всегда указывают на папку с программой, независимо от того, как она была запущена —
+    # вручную, ярлыком или автозагрузкой Windows (у которой рабочая директория может отличаться).
+    if getattr(sys, "frozen", False):
+        app_dir = os.path.dirname(sys.executable)
+    else:
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(app_dir)
+
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)  # закрытие окна сворачивает в трей, а не завершает программу
     main_window = MainApp()
     main_window.show()
     sys.exit(app.exec())
