@@ -4,11 +4,13 @@
 2. Глобальная горячая клавиша, которая позволяет добавить в словарь слово,
    выделенное в ЛЮБОМ приложении Windows (браузер, Word, блокнот и т.д.),
    без открытия окна программы.
+3. Автоматическая круглая кнопка "Добавить в словарь", которая появляется
+   рядом с курсором сразу после выделения текста мышью в любом приложении.
 
 Технический нюанс: у сторонних приложений нет способа встроить свой пункт
 в системное контекстное меню (ПКМ) чужой программы — это ограничение
 самой Windows. Поэтому используется тот же подход, что и в популярных
-переводчиках: глобальная горячая клавиша имитирует Ctrl+C для копирования
+переводчиках: глобальный хук имитирует Ctrl+C для копирования
 выделенного текста, читает буфер обмена и показывает всплывающее окно
 с предложением добавить слово.
 """
@@ -19,6 +21,10 @@ import time
 
 APP_NAME = "FrenchDictionaryApp"
 DEFAULT_HOTKEY = "ctrl+alt+d"
+
+# Сколько символов допускаем в автоматически выделенном фрагменте: длиннее —
+# это уже не отдельное слово/фраза для словаря, а случайно захваченный абзац.
+MAX_SELECTION_LENGTH = 120
 
 try:
     import winreg
@@ -37,6 +43,12 @@ try:
     _PYPERCLIP_AVAILABLE = True
 except ImportError:
     _PYPERCLIP_AVAILABLE = False
+
+try:
+    import mouse
+    _MOUSE_AVAILABLE = True
+except ImportError:
+    _MOUSE_AVAILABLE = False
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -206,3 +218,93 @@ class GlobalWordCapture(QObject):
 
         if selected_text and selected_text != (previous_text or "").strip():
             self.word_captured.emit(selected_text)
+
+
+# ------------------------- Кнопка при выделении текста мышью -------------------------
+
+def is_selection_popup_supported() -> bool:
+    """Автоматическая кнопка при выделении работает только на Windows и требует mouse/keyboard/pyperclip."""
+    return sys.platform == "win32" and _MOUSE_AVAILABLE and _KEYBOARD_AVAILABLE and _PYPERCLIP_AVAILABLE
+
+
+def get_missing_selection_dependencies() -> list:
+    """Возвращает названия пакетов, которых не хватает для работы кнопки при выделении текста."""
+    missing = []
+    if not _MOUSE_AVAILABLE:
+        missing.append("mouse")
+    if not _KEYBOARD_AVAILABLE:
+        missing.append("keyboard")
+    if not _PYPERCLIP_AVAILABLE:
+        missing.append("pyperclip")
+    return missing
+
+
+class SelectionPopupWatcher(QObject):
+    """
+    Слушает отпускание левой кнопки мыши в ЛЮБОМ приложении Windows. Сразу после
+    отпускания (будь то выделение протяжкой или двойной клик по слову):
+    1. Запоминает текущее содержимое буфера обмена.
+    2. Имитирует Ctrl+C.
+    3. Если буфер обмена изменился на непустой и не слишком длинный текст —
+       считает это выделенным словом/фразой и испускает сигнал text_selected
+       с этим текстом и текущими экранными координатами курсора, чтобы рядом
+       можно было показать маленькую круглую кнопку "Добавить в словарь".
+    """
+    text_selected = pyqtSignal(str, int, int)
+
+    def __init__(self):
+        super().__init__()
+        self._hooked = False
+
+    def start(self) -> bool:
+        """Включает слежение за выделением текста. Возвращает False, если это невозможно."""
+        if not is_selection_popup_supported():
+            return False
+        try:
+            mouse.on_button(self._on_mouse_up, buttons=(mouse.LEFT,), types=(mouse.UP,))
+            self._hooked = True
+            return True
+        except Exception as e:
+            print(f"Не удалось включить слежение за выделением текста: {e}")
+            return False
+
+    def stop(self):
+        """Отключает слежение за выделением текста (вызывать при выходе из программы)."""
+        if self._hooked:
+            try:
+                mouse.unhook_all()
+            except Exception:
+                pass
+            self._hooked = False
+
+    def _on_mouse_up(self):
+        try:
+            previous_text = pyperclip.paste()
+        except Exception:
+            previous_text = ""
+
+        try:
+            keyboard.send("ctrl+c")
+        except Exception:
+            return
+
+        # Небольшая пауза, чтобы активное приложение успело положить текст в буфер обмена
+        time.sleep(0.15)
+
+        try:
+            selected_text = pyperclip.paste().strip()
+        except Exception:
+            selected_text = ""
+
+        if not selected_text or selected_text == (previous_text or "").strip():
+            return
+
+        if len(selected_text) > MAX_SELECTION_LENGTH:
+            return
+
+        try:
+            x, y = mouse.get_position()
+        except Exception:
+            return
+
+        self.text_selected.emit(selected_text, x, y)

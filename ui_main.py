@@ -65,6 +65,17 @@ class DictionaryUI(QMainWindow):
         self.hotkey_hint_label.setStyleSheet("color: #888888;")
         settings_row.addWidget(self.hotkey_hint_label)
 
+        self.selection_popup_checkbox = QCheckBox("Кнопка «+» при выделении слова мышью")
+        self.selection_popup_checkbox.setFont(QFont("Arial", 10))
+        self.selection_popup_checkbox.setStyleSheet("color: #3d4e91;")
+        self.selection_popup_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.selection_popup_checkbox.setToolTip(
+            "Если включено — рядом с курсором появляется маленькая круглая кнопка\n"
+            "сразу после выделения текста мышью в любой программе. Клик по ней\n"
+            "переводит и сохраняет выделенное слово в словарь."
+        )
+        settings_row.addWidget(self.selection_popup_checkbox)
+
         settings_row.addStretch()
         main_layout.addLayout(settings_row)
 
