@@ -7,7 +7,6 @@ import os
 import time
 
 APP_NAME = "FrenchDictionaryApp"
-DEFAULT_HOTKEY = "ctrl+alt+d"
 MAX_SELECTION_LENGTH = 120
 
 try:
@@ -106,78 +105,6 @@ def disable_autostart() -> bool:
         return False
 
 
-# ------------------------- Глобальная горячая клавиша -------------------------
-
-def is_global_hotkey_supported() -> bool:
-    return sys.platform == "win32" and _KEYBOARD_AVAILABLE and _PYPERCLIP_AVAILABLE
-
-
-def get_missing_dependencies() -> list:
-    missing = []
-    if not _KEYBOARD_AVAILABLE:
-        missing.append("keyboard")
-    if not _PYPERCLIP_AVAILABLE:
-        missing.append("pyperclip")
-    return missing
-
-
-class GlobalWordCapture(QObject):
-    word_captured = pyqtSignal(str)
-
-    def __init__(self, hotkey: str = DEFAULT_HOTKEY):
-        super().__init__()
-        self.hotkey = hotkey
-        self._registered = False
-
-    def start(self) -> bool:
-        if not is_global_hotkey_supported():
-            return False
-        try:
-            keyboard.add_hotkey(self.hotkey, self._on_hotkey_pressed)
-            self._registered = True
-            return True
-        except Exception as e:
-            print(f"Не удалось зарегистрировать горячую клавишу '{self.hotkey}': {e}")
-            return False
-
-    def stop(self):
-        if self._registered:
-            try:
-                keyboard.remove_hotkey(self.hotkey)
-            except Exception:
-                pass
-            self._registered = False
-
-    def _on_hotkey_pressed(self):
-        try:
-            previous_text = pyperclip.paste()
-        except Exception:
-            previous_text = ""
-
-        for key in ("alt", "ctrl", "d"):
-            try:
-                keyboard.release(key)
-            except Exception:
-                pass
-        time.sleep(0.05)
-
-        try:
-            keyboard.send("ctrl+c")
-        except Exception as e:
-            print(f"Не удалось скопировать выделенный текст: {e}")
-            return
-
-        time.sleep(0.15)
-
-        try:
-            selected_text = pyperclip.paste().strip()
-        except Exception:
-            selected_text = ""
-
-        if selected_text and selected_text != (previous_text or "").strip():
-            self.word_captured.emit(selected_text)
-
-
 # ==================== Всплывающая кнопка-кружок ====================
 
 class RoundAddButton(QPushButton):
@@ -243,19 +170,23 @@ class RoundAddButton(QPushButton):
         self.hide()
 
 
-# ------------------------- Менеджер выделения текста -------------------------
+# ------------------------- Режим выделения слов (Alt+W) -------------------------
 
 # Сколько секунд максимум может пройти между двумя кликами ЛКМ, чтобы засчитать их
-# как двойной клик, и на сколько пикселей курсор может сместиться между кликами.
+# как двойной клик (двойной клик — это то, чем пользователь выделяет одно слово),
+# и на сколько пикселей курсор может сместиться между кликами.
 DOUBLE_CLICK_MAX_INTERVAL = 0.4
 DOUBLE_CLICK_MAX_DISTANCE = 6
 
+# Горячая клавиша, которой пользователь включает и выключает режим выделения слов.
+DEFAULT_TOGGLE_HOTKEY = "alt+w"
 
-def is_selection_popup_supported() -> bool:
+
+def is_word_selection_mode_supported() -> bool:
     return sys.platform == "win32" and _MOUSE_AVAILABLE and _KEYBOARD_AVAILABLE and _PYPERCLIP_AVAILABLE
 
 
-def get_missing_selection_dependencies() -> list:
+def get_missing_word_selection_dependencies() -> list:
     missing = []
     if not _MOUSE_AVAILABLE:
         missing.append("mouse")
@@ -266,17 +197,31 @@ def get_missing_selection_dependencies() -> list:
     return missing
 
 
-class SelectionPopupWatcher(QObject):
+class WordSelectionModeWatcher(QObject):
     """
-    Отслеживает выделение мышью и координирует появление круглой кнопки.
-    """
-    # Этот сигнал теперь можно использовать в главном окне приложения:
-    # watcher.word_ready_to_add.connect(self.my_add_to_dictionary_function)
-    word_ready_to_add = pyqtSignal(str)
+    Режим "выделения слов мышью", включаемый и выключаемый горячей клавишей Alt+W.
 
-    def __init__(self):
+    Пока режим выключен, программа не трогает мышь вообще. Как только пользователь
+    нажимает Alt+W, включается слежение за мышью в любом приложении Windows: как
+    только пользователь выделяет слово двойным кликом, рядом с курсором появляется
+    круглая кнопка с предложением добавить это слово в словарь. Слежение продолжает
+    работать (то есть кнопка будет появляться для каждого следующего выделенного
+    слова) до тех пор, пока пользователь снова не нажмет Alt+W — тогда слежение
+    выключается и мышь больше не отслеживается.
+    """
+    # Испускается, когда пользователь кликнул по кружку и подтвердил, что хочет
+    # добавить показанное слово в словарь.
+    word_ready_to_add = pyqtSignal(str)
+    # Испускается при включении (True) и выключении (False) режима — например,
+    # чтобы главное окно могло обновить подсказку в интерфейсе.
+    mode_changed = pyqtSignal(bool)
+
+    def __init__(self, toggle_hotkey: str = DEFAULT_TOGGLE_HOTKEY):
         super().__init__()
-        self._hooked = False
+        self.toggle_hotkey = toggle_hotkey
+        self._hotkey_registered = False
+        self._mouse_hooked = False
+        self.active = False
         # Время и координаты предыдущего отпускания ЛКМ — по ним сами определяем двойной клик.
         self._last_click_time = 0.0
         self._last_click_pos = (0, 0)
@@ -286,8 +231,66 @@ class SelectionPopupWatcher(QObject):
         self.popup_button.clicked_word.connect(self.word_ready_to_add.emit)
 
     def start(self) -> bool:
-        if not is_selection_popup_supported():
+        """Регистрирует глобальную горячую клавишу Alt+W. Само слежение за мышью
+        при этом еще не включается — оно включится только по первому нажатию Alt+W."""
+        if not is_word_selection_mode_supported():
             return False
+        try:
+            # suppress=True не дает нажатию Alt+W "утечь" в активное окно — иначе
+            # эта комбинация дополнительно сработает как обычное нажатие клавиш
+            # в текущей программе (что угодно, вплоть до системных сочетаний).
+            keyboard.add_hotkey(self.toggle_hotkey, self._toggle_mode, suppress=True)
+            self._hotkey_registered = True
+            return True
+        except Exception as e:
+            print(f"Не удалось зарегистрировать горячую клавишу '{self.toggle_hotkey}': {e}")
+            return False
+
+    def stop(self):
+        """Полностью отключает менеджер: снимает горячую клавишу и слежение за мышью."""
+        if self._hotkey_registered:
+            try:
+                keyboard.remove_hotkey(self.toggle_hotkey)
+            except Exception:
+                pass
+            self._hotkey_registered = False
+        self._disable_mouse_tracking()
+        self.active = False
+        self.popup_button.close()
+
+    def _toggle_mode(self):
+        """Срабатывает по нажатию Alt+W: включает режим, если он был выключен, и наоборот."""
+        # На всякий случай принудительно "отпускаем" alt и w в трекере библиотеки keyboard.
+        # Без этого библиотека иногда продолжает считать Alt зажатым даже после того,
+        # как пользователь физически его отпустил, из-за чего следующий keyboard.send("ctrl+c")
+        # в _on_word_selected на самом деле уходит в систему как Ctrl+Alt+C — копирование
+        # не срабатывает, а активная программа может отреагировать на эту комбинацию
+        # по-своему (например, убавить громкость).
+        for key in ("alt", "w"):
+            try:
+                keyboard.release(key)
+            except Exception:
+                pass
+
+        if self.active:
+            self._deactivate()
+        else:
+            self._activate()
+
+    def _activate(self):
+        if not self._enable_mouse_tracking():
+            return
+        self.active = True
+        self.mode_changed.emit(True)
+
+    def _deactivate(self):
+        self._disable_mouse_tracking()
+        self.active = False
+        self.mode_changed.emit(False)
+
+    def _enable_mouse_tracking(self) -> bool:
+        if self._mouse_hooked:
+            return True
         try:
             # Слушаем КАЖДОЕ отпускание ЛКМ и сами решаем, был ли это двойной клик
             # (по времени и расстоянию между двумя последовательными кликами).
@@ -295,23 +298,23 @@ class SelectionPopupWatcher(QObject):
             # в отличие от встроенного mouse.on_double_click, поведение которого
             # мы не контролируем напрямую.
             mouse.on_button(self._on_left_click, buttons=(mouse.LEFT,), types=(mouse.UP,))
-            self._hooked = True
+            self._mouse_hooked = True
             return True
         except Exception as e:
             print(f"Не удалось включить слежение за выделением текста: {e}")
             return False
 
-    def stop(self):
-        if self._hooked:
+    def _disable_mouse_tracking(self):
+        if self._mouse_hooked:
             try:
                 mouse.unhook_all()
             except Exception:
                 pass
-            self._hooked = False
-        self.popup_button.close()
+            self._mouse_hooked = False
 
     def _on_left_click(self):
-        """Срабатывает на КАЖДОЕ отпускание ЛКМ; действие запускаем только если это второй клик подряд."""
+        """Срабатывает на КАЖДОЕ отпускание ЛКМ, пока режим включен; действие
+        запускаем только если это второй клик подряд (двойной клик)."""
         now = time.time()
         try:
             x, y = mouse.get_position()
@@ -337,18 +340,31 @@ class SelectionPopupWatcher(QObject):
         # еще одним двойным кликом от того же самого первого нажатия.
         self._last_click_time = 0.0
 
-        self._on_double_click(x, y)
+        self._on_word_selected(x, y)
 
-    def _on_double_click(self, x, y):
+    def _on_word_selected(self, x, y):
         try:
             previous_text = pyperclip.paste()
         except Exception:
             previous_text = ""
 
-        try:
-            keyboard.send("ctrl+c")
-        except Exception:
-            return
+        # Второй защитный сброс модификаторов прямо перед копированием: если вдруг
+        # пользователь до сих пор физически держит Alt (или Ctrl/Shift), Ctrl+C
+        # снова превратится в другое сочетание и ничего не скопируется.
+        for key in ("alt", "ctrl", "shift"):
+            try:
+                keyboard.release("alt")
+                keyboard.release("ctrl")
+                keyboard.release("shift")
+
+                time.sleep(0.05)
+
+                keyboard.press("ctrl")
+                keyboard.press_and_release("c")
+                keyboard.release("ctrl")
+
+            except Exception:
+                return
 
         time.sleep(0.15)
 
@@ -366,7 +382,7 @@ class SelectionPopupWatcher(QObject):
         # x, y — координаты курсора в момент самого двойного клика (переданы вызывающим
         # кодом), а не после паузы в 150мс, за которую курсор мог успеть сместиться.
 
-        # Вместо простой отправки координат бэкенду, 
+        # Вместо простой отправки координат бэкенду,
         # мы напрямую заставляем UI-кружок появиться на экране в нужной точке.
         # Метод вызовется безопасно в контексте потока Qt.
         QTimer.singleShot(0, lambda: self.popup_button.show_at(selected_text, x, y))
@@ -375,14 +391,15 @@ class SelectionPopupWatcher(QObject):
 # --- Пример для тестирования (можно запустить напрямую этот файл) ---
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
-    watcher = SelectionPopupWatcher()
+
+    watcher = WordSelectionModeWatcher()
     if watcher.start():
-        print("Слушатель выделения запущен. Выделите текст в любом приложении...")
-        
+        print("Менеджер режима выделения слов запущен. Нажмите Alt+W, чтобы включить слежение...")
+
         # Тестовый обработчик: покажет в консоли, что слово успешно «перехвачено» кружком
         watcher.word_ready_to_add.connect(lambda word: print(f"Слово добавлено в словарь: {word}"))
-        
+        watcher.mode_changed.connect(lambda on: print("Режим выделения:", "включен" if on else "выключен"))
+
         sys.exit(app.exec())
     else:
-        print("Ошибка запуска. Проверьте зависимости:", get_missing_selection_dependencies())
+        print("Ошибка запуска. Проверьте зависимости:", get_missing_word_selection_dependencies())
