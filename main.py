@@ -42,7 +42,7 @@ class TranslationThread(QThread):
 class QuickAddPopup(QDialog):
     """
     Компактное всплывающее окно без рамки, которое появляется рядом с курсором мыши
-    после того как оно было выделено двойным кликом в режиме Alt+W в ЛЮБОМ приложении Windows.
+    после того как слово было выделено и скопировано по Ctrl+Alt+W в ЛЮБОМ приложении Windows.
     Позволяет подтвердить или поправить захваченное слово перед добавлением в словарь.
     """
     def __init__(self, word: str, main_app):
@@ -571,7 +571,7 @@ class MainApp(DictionaryUI):
         self.init_tray_icon()
         self.init_autostart_option()
         self.init_background_mode_option()
-        self.init_word_selection_mode()
+        self.init_global_hotkey()
 
 
     def init_tray_icon(self):
@@ -625,68 +625,49 @@ class MainApp(DictionaryUI):
         else:
             self.statusBar().showMessage(message, 4000)
 
-    def init_word_selection_mode(self):
+    def init_global_hotkey(self):
         """
-        Регистрирует горячую клавишу Alt+W, включающую и выключающую режим выделения слов:
-        пока режим включен, программа следит за мышью в любом приложении Windows и
-        предлагает добавить в словарь каждое слово, которое пользователь выделяет
-        двойным кликом. Повторное нажатие Alt+W выключает слежение.
+        Регистрирует горячую клавишу Ctrl+Alt+W: по нажатию программа копирует то, что
+        выделено в активном приложении Windows, и сразу предлагает добавить это
+        слово в словарь — без открытия окна программы.
         """
-        self.word_selection_watcher = None
+        self.word_capture = None
 
         if sys.platform != "win32":
             self.hotkey_hint_label.setText("Быстрое добавление слов доступно только на Windows.")
             return
 
-        missing = system_integration.get_missing_word_selection_dependencies()
+        missing = system_integration.get_missing_dependencies()
 
         if missing:
             packages = " ".join(missing)
             self.hotkey_hint_label.setText(
-                f"Alt+W не работает: не установлены пакеты {packages}."
+                f"Ctrl+Alt+W не работает: не установлены пакеты {packages}."
             )
             QMessageBox.warning(
                 self, "Горячая клавиша недоступна",
-                "Alt+W не работает, потому что не установлены необходимые библиотеки.\n\n"
+                "Ctrl+Alt+W не работает, потому что не установлены необходимые библиотеки.\n\n"
                 f"Откройте командную строку и выполните:\n\npip install {packages}\n\n"
                 "После установки перезапустите программу."
             )
             return
 
-        self.word_selection_watcher = system_integration.WordSelectionModeWatcher()
-        self.word_selection_watcher.word_ready_to_add.connect(self.on_text_selected)
-        self.word_selection_watcher.mode_changed.connect(self.on_word_selection_mode_changed)
-        registered = self.word_selection_watcher.start()
+        self.word_capture = system_integration.GlobalWordCapture()
+        self.word_capture.word_captured.connect(self.on_text_selected)
+        registered = self.word_capture.start()
 
         if not registered:
             self.hotkey_hint_label.setText(
-                "Не удалось зарегистрировать Alt+W (конфликт с другой программой или нужны права администратора)."
+                "Не удалось зарегистрировать Ctrl+Alt+W (конфликт с другой программой или нужны права администратора)."
             )
             QMessageBox.warning(
                 self, "Не удалось включить горячую клавишу",
-                "Не получилось зарегистрировать сочетание Alt+W.\n\n"
+                "Не получилось зарегистрировать сочетание Ctrl+Alt+W.\n\n"
                 "Возможные причины:\n"
                 "• Это сочетание уже занято другой программой.\n"
                 "• Нужно запустить программу от имени администратора "
                 "(некоторые системы блокируют низкоуровневый перехват клавиш для обычных пользователей).\n"
                 "• Антивирус блокирует перехват клавиатуры — добавьте программу в исключения."
-            )
-
-    def on_word_selection_mode_changed(self, enabled: bool):
-        """Обновляет подсказку и показывает уведомление в трее при включении/выключении режима Alt+W."""
-        if enabled:
-            self.hotkey_hint_label.setText("Режим выделения слов включен — выделяйте слова двойным кликом (Alt+W — выключить).")
-            self.tray_icon.showMessage(
-                "Режим выделения слов включен",
-                "Выделяйте слова двойным кликом в любой программе. Alt+W — выключить.",
-                QSystemTrayIcon.MessageIcon.Information, 3000
-            )
-        else:
-            self.hotkey_hint_label.setText("Alt+W — включить режим выделения слов из любой программы")
-            self.tray_icon.showMessage(
-                "Режим выделения слов выключен",
-                "Alt+W — включить снова.",
-                QSystemTrayIcon.MessageIcon.Information, 3000
             )
 
     def on_text_selected(self, word):
@@ -716,7 +697,7 @@ class MainApp(DictionaryUI):
         """
         Применяет режим фоновой работы:
         - enabled=True: закрытие окна сворачивает программу в трей, приложение не завершается,
-          горячая клавиша Alt+W продолжает работать.
+          горячая клавиша Ctrl+Alt+W продолжает работать.
         - enabled=False: закрытие окна полностью завершает программу (обычное поведение).
         """
         self.background_mode = enabled
@@ -774,15 +755,15 @@ class MainApp(DictionaryUI):
 
     def quit_app(self):
         """Полностью закрывает программу (в отличие от закрытия окна, которое сворачивает в трей)."""
-        if getattr(self, "word_selection_watcher", None):
-            self.word_selection_watcher.stop()
+        if getattr(self, "word_capture", None):
+            self.word_capture.stop()
         self.tray_icon.hide()
         QApplication.quit()
 
     def closeEvent(self, event):
         """
         Если включен фоновый режим — закрытие окна крестиком сворачивает программу в трей,
-        и горячая клавиша Alt+W продолжает работать. Если фоновый режим выключен —
+        и горячая клавиша Ctrl+Alt+W продолжает работать. Если фоновый режим выключен —
         закрытие окна полностью завершает программу (обычное поведение).
         """
         if getattr(self, "background_mode", True):
@@ -790,13 +771,13 @@ class MainApp(DictionaryUI):
             self.hide()
             self.tray_icon.showMessage(
                 "Словарь свернут в трей",
-                "Программа продолжает работать в фоне. Alt+W включит режим выделения слов из любого приложения.",
+                "Программа продолжает работать в фоне. Ctrl+Alt+W скопирует выделенное слово и предложит добавить его в словарь.",
                 QSystemTrayIcon.MessageIcon.Information,
                 4000
             )
         else:
-            if getattr(self, "word_selection_watcher", None):
-                self.word_selection_watcher.stop()
+            if getattr(self, "word_capture", None):
+                self.word_capture.stop()
             self.tray_icon.hide()
             event.accept()
 

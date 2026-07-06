@@ -56,11 +56,11 @@ class DictionaryUI(QMainWindow):
         self.background_mode_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
         self.background_mode_checkbox.setToolTip(
             "Если включено — закрытие окна сворачивает программу в трей, и горячая клавиша\n"
-            "Alt+W продолжает работать. Если выключено — закрытие окна полностью завершает программу."
+            "Ctrl+Alt+W продолжает работать. Если выключено — закрытие окна полностью завершает программу."
         )
         settings_row.addWidget(self.background_mode_checkbox)
 
-        self.hotkey_hint_label = QLabel("Alt+W — включить режим выделения слов из любой программы")
+        self.hotkey_hint_label = QLabel("Ctrl+Alt+W — скопировать выделенное слово и добавить в словарь")
         self.hotkey_hint_label.setFont(QFont("Arial", 10))
         self.hotkey_hint_label.setStyleSheet("color: #888888;")
         settings_row.addWidget(self.hotkey_hint_label)
