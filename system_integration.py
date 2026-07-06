@@ -117,14 +117,14 @@ class RoundAddButton(QPushButton):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(
-            Qt.WindowType.ToolTip |              # Поверх всех окон, без рамки и иконки в таскбаре
-            Qt.WindowType.FramelessWindowHint |  # Убираем стандартные границы Windows
-            Qt.WindowType.WindowDoesNotAcceptFocus # Не забирает фокус ввода у активного приложения
-        )
+        Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.WindowStaysOnTopHint
+        | Qt.WindowType.Tool
+)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) # Прозрачный фон для круга
         
         # Размеры кружка (30x30 пикселей)
-        self.setFixedSize(30, 30)
+        self.setFixedSize(40, 40)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         
         # Стилизация: синий кружок с белым плюсом (можно изменить под свой дизайн)
@@ -152,12 +152,20 @@ class RoundAddButton(QPushButton):
         self.clicked.connect(self._on_clicked)
 
     def show_at(self, text: str, x: int, y: int):
-        """Отображает кнопку чуть правее и выше курсора, чтобы не мешать кликать дальше."""
         self.current_text = text
-        # Смещение: +15 пикселей вправо, -10 пикселей вверх от кончика курсора
+
+        print(f"[DEBUG] Показываем: {text}")
+        print(f"[DEBUG] Координаты: {x}, {y}")
+
         self.move(x + 15, y - 10)
+
         self.show()
-        self.hide_timer.start(3000) # Исчезнет через 3000 мс (3 секунды)
+        self.raise_()
+        self.activateWindow()
+
+        print("[DEBUG] visible =", self.isVisible())
+
+        self.hide_timer.start(3000)
 
     def enterEvent(self, event: QEnterEvent):
         """Если пользователь навел мышь на кружок, отменяем таймер скрытия."""
@@ -266,7 +274,7 @@ class WordSelectionModeWatcher(QObject):
         # в _on_word_selected на самом деле уходит в систему как Ctrl+Alt+C — копирование
         # не срабатывает, а активная программа может отреагировать на эту комбинацию
         # по-своему (например, убавить громкость).
-        for key in ("alt", "w"):
+        for key in ("alt", "w", "ctrl", "shift", "windows"):
             try:
                 keyboard.release(key)
             except Exception:
@@ -351,41 +359,65 @@ class WordSelectionModeWatcher(QObject):
         # Второй защитный сброс модификаторов прямо перед копированием: если вдруг
         # пользователь до сих пор физически держит Alt (или Ctrl/Shift), Ctrl+C
         # снова превратится в другое сочетание и ничего не скопируется.
-        for key in ("alt", "ctrl", "shift"):
+        
+    # гарантированно отпускаем все модификаторы
+            for key in ("alt", "ctrl", "shift", "windows"):
+                keyboard.release(key)
+
+            time.sleep(0.02)
+
             try:
-                keyboard.release("alt")
-                keyboard.release("ctrl")
-                keyboard.release("shift")
-
-                time.sleep(0.05)
-
-                keyboard.press("ctrl")
-                keyboard.press_and_release("c")
-                keyboard.release("ctrl")
-
+                pyperclip.copy("")
             except Exception:
-                return
+                pass
 
-        time.sleep(0.15)
+            keyboard.send("ctrl+c")
+
+        except Exception:
+            return
+
+            time.sleep(0.25)
+
+        # try:
+        #     selected_text = pyperclip.paste().strip()
+        # except Exception:
+        #     selected_text = ""
+
+        # if not selected_text or selected_text == (previous_text or "").strip():
+        #     return
+
+        # if len(selected_text) > MAX_SELECTION_LENGTH:
+        #     return
+
+        # # x, y — координаты курсора в момент самого двойного клика (переданы вызывающим
+        # # кодом), а не после паузы в 150мс, за которую курсор мог успеть сместиться.
+
+        # # Вместо простой отправки координат бэкенду,
+        # # мы напрямую заставляем UI-кружок появиться на экране в нужной точке.
+        # # Метод вызовется безопасно в контексте потока Qt.
+        # QTimer.singleShot(0, lambda: self.popup_button.show_at(selected_text, x, y))
+
 
         try:
             selected_text = pyperclip.paste().strip()
-        except Exception:
+            print(f"[DEBUG] Выделено: '{selected_text}'")
+        except Exception as e:
+            print("[DEBUG] Ошибка буфера:", e)
             selected_text = ""
 
-        if not selected_text or selected_text == (previous_text or "").strip():
-            return
+        if not selected_text:
+            print("[DEBUG] Текст пустой")
+        return
 
-        if len(selected_text) > MAX_SELECTION_LENGTH:
-            return
+        print("[DEBUG] Показываем кружок")
 
-        # x, y — координаты курсора в момент самого двойного клика (переданы вызывающим
-        # кодом), а не после паузы в 150мс, за которую курсор мог успеть сместиться.
+        self.popup_button.show_at(
+            selected_text,
+            x,
+            y
+        )
 
-        # Вместо простой отправки координат бэкенду,
-        # мы напрямую заставляем UI-кружок появиться на экране в нужной точке.
-        # Метод вызовется безопасно в контексте потока Qt.
-        QTimer.singleShot(0, lambda: self.popup_button.show_at(selected_text, x, y))
+print("[DEBUG] show_at вызван")
 
 
 # --- Пример для тестирования (можно запустить напрямую этот файл) ---
