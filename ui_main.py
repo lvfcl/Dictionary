@@ -41,6 +41,11 @@ class DictionaryUI(QMainWindow):
         input_layout.addWidget(self.add_button)
         main_layout.addLayout(input_layout)
 
+        self.hint_label = QLabel("Вы можете просто скопировать (Ctrl+C) любое слово в другом окне, и нажать на плюсик ➕ для быстрого добавления")
+        self.hint_label.setFont(QFont("Arial", 10))
+        self.hint_label.setStyleSheet("color: #7f8c8d; font-style: italic; margin-bottom: 5px;")
+        main_layout.addWidget(self.hint_label)
+
         settings_row = QHBoxLayout()
         settings_row.setSpacing(15)
 
