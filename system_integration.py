@@ -1,207 +1,158 @@
 """
-Модуль системной интеграции для Windows:
-1. Автозапуск программы при включении ПК (через ветку реестра Run).
-2. Глобальная горячая клавиша Ctrl+Alt+W: копирует то, что выделено в АКТИВНОМ
-   приложении Windows (браузер, Word, блокнот и т.д.), и предлагает добавить
-   это слово в словарь — без открытия окна программы.
-
-Технический нюанс: у сторонних приложений нет способа встроить свой пункт
-в системное контекстное меню (ПКМ) чужой программы — это ограничение
-самой Windows. Поэтому используется тот же подход, что и в популярных
-переводчиках: горячая клавиша имитирует Ctrl+C для копирования выделенного
-текста, читает буфер обмена и передает результат в программу.
+Системная интеграция для Windows:
+1. Автозапуск программы вместе с Windows (через ветку реестра Run).
+2. Глобальный мониторинг буфера обмена для вызова "кружочка" добавления слов.
 """
 
 import sys
 import os
-import time
+import winreg
+from PyQt6.QtWidgets import QWidget, QPushButton
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtGui import QCursor
+
+IS_WINDOWS = sys.platform == "win32"
 
 APP_NAME = "FrenchDictionaryApp"
-DEFAULT_HOTKEY = "ctrl+alt+w"
-
-try:
-    import winreg
-    _WINREG_AVAILABLE = True
-except ImportError:
-    _WINREG_AVAILABLE = False
-
-try:
-    import keyboard
-    _KEYBOARD_AVAILABLE = True
-except ImportError:
-    _KEYBOARD_AVAILABLE = False
-
-try:
-    import pyperclip
-    _PYPERCLIP_AVAILABLE = True
-except ImportError:
-    _PYPERCLIP_AVAILABLE = False
-
-from PyQt6.QtCore import QObject, pyqtSignal
+RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
-# ------------------------- Автозапуск при включении ПК -------------------------
-
-def _get_run_registry_path():
-    return winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-
-def _get_startup_command() -> str:
-    """
-    Формирует команду для запуска программы из автозагрузки.
-    Если программа собрана в .exe (например, через PyInstaller) — используется путь к .exe.
-    Если запущена из исходников — используется pythonw.exe (без консольного окна) + путь к скрипту.
-    """
-    if getattr(sys, "frozen", False):
-        return f'"{sys.executable}"'
-
-    python_dir = os.path.dirname(sys.executable)
-    pythonw_path = os.path.join(python_dir, "pythonw.exe")
-    if not os.path.exists(pythonw_path):
-        pythonw_path = sys.executable
-
-    script_path = os.path.abspath(sys.argv[0])
-    return f'"{pythonw_path}" "{script_path}"'
-
+# ------------------------- 1. Автозапуск (Windows Run-ключ реестра) -------------------------
 
 def is_autostart_supported() -> bool:
-    """Автозапуск через реестр поддерживается только в Windows."""
-    return sys.platform == "win32" and _WINREG_AVAILABLE
+    return IS_WINDOWS
 
+def _get_executable_command() -> str:
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}"'
+    script_path = os.path.abspath(sys.argv[0])
+    return f'"{sys.executable}" "{script_path}"'
 
 def is_autostart_enabled() -> bool:
-    """Проверяет, стоит ли программа сейчас в автозагрузке Windows."""
-    if not is_autostart_supported():
+    if not IS_WINDOWS:
         return False
     try:
-        hive, path = _get_run_registry_path()
-        with winreg.OpenKey(hive, path, 0, winreg.KEY_READ) as key:
-            winreg.QueryValueEx(key, APP_NAME)
-        return True
-    except (FileNotFoundError, OSError):
-        return False
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_READ) as key:
+            try:
+                value, _ = winreg.QueryValueEx(key, APP_NAME)
+                return bool(value)
+            except FileNotFoundError:
+                return False
     except Exception as e:
-        print(f"Ошибка при проверке автозапуска: {e}")
+        print(f"Не удалось проверить состояние автозапуска: {e}")
         return False
-
 
 def enable_autostart() -> bool:
-    """Включает автозапуск программы при включении Windows."""
-    if not is_autostart_supported():
+    if not IS_WINDOWS:
         return False
     try:
-        hive, path = _get_run_registry_path()
-        command = _get_startup_command()
-        with winreg.OpenKey(hive, path, 0, winreg.KEY_WRITE) as key:
+        command = _get_executable_command()
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command)
         return True
     except Exception as e:
-        print(f"Ошибка при включении автозапуска: {e}")
+        print(f"Не удалось включить автозапуск: {e}")
         return False
-
 
 def disable_autostart() -> bool:
-    """Отключает автозапуск программы."""
-    if not is_autostart_supported():
+    if not IS_WINDOWS:
         return False
     try:
-        hive, path = _get_run_registry_path()
-        with winreg.OpenKey(hive, path, 0, winreg.KEY_WRITE) as key:
-            winreg.DeleteValue(key, APP_NAME)
-        return True
-    except FileNotFoundError:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE) as key:
+            try:
+                winreg.DeleteValue(key, APP_NAME)
+            except FileNotFoundError:
+                pass
         return True
     except Exception as e:
-        print(f"Ошибка при отключении автозапуска: {e}")
+        print(f"Не удалось отключить автозапуск: {e}")
         return False
 
 
-# ------------------------- Глобальная горячая клавиша Ctrl+Alt+W -------------------------
+# ------------------------- 2. Всплывающий кружочек при копировании -------------------------
 
-def is_global_hotkey_supported() -> bool:
-    """Захват текста из любого приложения работает только на Windows и требует библиотеки keyboard/pyperclip."""
-    return sys.platform == "win32" and _KEYBOARD_AVAILABLE and _PYPERCLIP_AVAILABLE
+class FloatingAddButton(QWidget):
+    """Прозрачный виджет с круглой кнопкой, который появляется поверх всех окон."""
+    word_to_add = pyqtSignal(str)
 
-
-def get_missing_dependencies() -> list:
-    """Возвращает названия пакетов, которые нужно установить для работы горячей клавиши."""
-    missing = []
-    if not _KEYBOARD_AVAILABLE:
-        missing.append("keyboard")
-    if not _PYPERCLIP_AVAILABLE:
-        missing.append("pyperclip")
-    return missing
-
-
-class GlobalWordCapture(QObject):
-    """
-    Слушает системную горячую клавишу (по умолчанию Ctrl+Alt+W). При нажатии:
-    1. Запоминает текущее содержимое буфера обмена.
-    2. Имитирует Ctrl+C, чтобы скопировать то, что пользователь выделил в активном окне.
-    3. Если буфер обмена изменился — считает это выделенным словом и испускает сигнал
-       word_captured с этим текстом (сигнал безопасно приходит в основной поток Qt,
-       даже если сработал из фонового потока библиотеки keyboard).
-    """
-    word_captured = pyqtSignal(str)
-
-    def __init__(self, hotkey: str = DEFAULT_HOTKEY):
+    def __init__(self):
         super().__init__()
-        self.hotkey = hotkey
-        self._registered = False
+        # Настройки окна: поверх всех, без рамок, не отбирает фокус
+        self.setWindowFlags(
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.Tool | 
+            Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(50, 50)
+        
+        self.btn = QPushButton("➕", self)
+        self.btn.setFixedSize(40, 40)
+        self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Стилизуем под красивый синий кружочек
+        self.btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4A90E2;
+                color: white;
+                border-radius: 20px;
+                font-size: 20px;
+                font-weight: bold;
+                border: 2px solid white;
+            }
+            QPushButton:hover {
+                background-color: #2ECC71;
+                border: 2px solid #27AE60;
+            }
+        """)
+        self.btn.move(5, 5)  # Небольшой отступ от краев прозрачного виджета
+        self.btn.clicked.connect(self.on_clicked)
+        
+        self.current_word = ""
+        
+        # Таймер, чтобы кружок исчезал, если его проигнорировали (через 4 секунды)
+        self.hide_timer = QTimer(self)
+        self.hide_timer.timeout.connect(self.hide)
+        
+    def show_for_word(self, word):
+        """Перемещает кружок к курсору мыши и показывает его."""
+        self.current_word = word
+        pos = QCursor.pos()
+        # Показываем чуть правее и ниже курсора
+        self.move(pos.x() + 15, pos.y() + 15)
+        self.show()
+        self.hide_timer.start(4000) 
+        
+    def on_clicked(self):
+        """Если нажали — отправляем сигнал с сохраненным словом."""
+        if self.current_word:
+            self.word_to_add.emit(self.current_word)
+        self.hide()
 
-    def start(self) -> bool:
-        """Регистрирует глобальную горячую клавишу. Возвращает False, если это невозможно."""
-        if not is_global_hotkey_supported():
-            return False
-        try:
-            # suppress=True не дает нажатию Ctrl+Alt+W "утечь" в активное окно как
-            # обычное нажатие клавиш (например, открыть меню "Файл" по Alt).
-            keyboard.add_hotkey(self.hotkey, self._on_hotkey_pressed, suppress=True)
-            self._registered = True
-            return True
-        except Exception as e:
-            print(f"Не удалось зарегистрировать горячую клавишу '{self.hotkey}': {e}")
-            return False
 
-    def stop(self):
-        """Снимает регистрацию горячей клавиши (вызывать при выходе из программы)."""
-        if self._registered:
-            try:
-                keyboard.remove_hotkey(self.hotkey)
-            except Exception:
-                pass
-            self._registered = False
-
-    def _on_hotkey_pressed(self):
-        try:
-            previous_text = pyperclip.paste()
-        except Exception:
-            previous_text = ""
-
-        # В момент срабатывания хоткея Alt еще физически зажат пользователем.
-        # Если отправить Ctrl+C прямо сейчас, активное приложение может получить
-        # Ctrl+Alt+C вместо обычного "копировать" — и буфер обмена не изменится.
-        # Поэтому сначала явно отпускаем клавиши самого хоткея.
-        for key in ("alt", "w", "ctrl", "shift"):
-            try:
-                keyboard.release(key)
-            except Exception:
-                pass
-        time.sleep(0.05)
-
-        try:
-            keyboard.send("ctrl+c")
-        except Exception as e:
-            print(f"Не удалось скопировать выделенный текст: {e}")
+class ClipboardMonitor:
+    """Следит за буфером обмена и вызывает кружочек, если скопировано одно слово."""
+    def __init__(self, app_instance, add_callback):
+        self.app = app_instance
+        self.clipboard = self.app.clipboard()
+        
+        self.floating_btn = FloatingAddButton()
+        self.floating_btn.word_to_add.connect(add_callback)
+        
+        self.clipboard.dataChanged.connect(self.on_clipboard_change)
+        self.last_text = self.clipboard.text().strip()
+        
+    def on_clipboard_change(self):
+        text = self.clipboard.text().strip()
+        
+        # Защита от спама: реагируем только на новый текст
+        if not text or text == self.last_text:
             return
+            
+        self.last_text = text
+        
+        # Проверяем, что это короткое слово или фраза (не больше 3 слов, не больше 30 символов)
+        words_count = len(text.split())
+        if words_count <= 3 and len(text) < 30:
+            self.floating_btn.show_for_word(text)
 
-        # Небольшая пауза, чтобы активное приложение успело положить текст в буфер обмена
-        time.sleep(0.15)
-
-        try:
-            selected_text = pyperclip.paste().strip()
-        except Exception:
-            selected_text = ""
-
-        if selected_text and selected_text != (previous_text or "").strip():
-            self.word_captured.emit(selected_text)
