@@ -7,9 +7,9 @@ from PyQt6.QtWidgets import QInputDialog
 from PyQt6.QtWidgets import (QApplication, QMessageBox, QDialog, QVBoxLayout, 
                              QHBoxLayout, QLabel, QPushButton, QTextBrowser, QWidget,
                              QComboBox, QSpinBox, QListWidget, QListWidgetItem,
-                             QSystemTrayIcon, QMenu, QLineEdit, QStyle)
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl, QTimer
-from PyQt6.QtGui import QFont, QAction, QCursor
+                             QSystemTrayIcon, QMenu, QStyle)
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl
+from PyQt6.QtGui import QFont, QAction
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from ui_main import DictionaryUI
@@ -37,76 +37,6 @@ class TranslationThread(QThread):
                 self.error.emit("Слово не найдено или ошибка перевода.")
         except Exception as e:
             self.error.emit(str(e))
-
-
-class QuickAddPopup(QDialog):
-    """
-    Компактное всплывающее окно без рамки, которое появляется рядом с курсором мыши
-    после того как слово было выделено и скопировано по Ctrl+Alt+W в ЛЮБОМ приложении Windows.
-    Позволяет подтвердить или поправить захваченное слово перед добавлением в словарь.
-    """
-    def __init__(self, word: str, main_app):
-        super().__init__(
-            None,
-            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
-        )
-        self.main_app = main_app
-        self.setFixedSize(300, 120)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #FFFFFF;
-                border: 2px solid #4A90E2;
-                border-radius: 8px;
-            }
-            QLabel { color: #333333; }
-            QLineEdit {
-                border: 1px solid #CBD5E1;
-                border-radius: 4px;
-                padding: 5px;
-                color: #333333;
-            }
-        """)
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
-
-        title = QLabel("Добавить слово в словарь:")
-        title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        layout.addWidget(title)
-
-        self.word_edit = QLineEdit(word)
-        self.word_edit.setFont(QFont("Arial", 12))
-        self.word_edit.selectAll()
-        layout.addWidget(self.word_edit)
-
-        buttons_layout = QHBoxLayout()
-        cancel_btn = QPushButton("Отмена")
-        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_btn.clicked.connect(self.reject)
-
-        add_btn = QPushButton("Добавить")
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.setStyleSheet("background-color:#2ECC71; color:white; font-weight:bold; border-radius:4px;")
-        add_btn.clicked.connect(self.confirm_add)
-
-        buttons_layout.addWidget(cancel_btn)
-        buttons_layout.addWidget(add_btn)
-        layout.addLayout(buttons_layout)
-
-        self.setLayout(layout)
-
-        # Показываем окно рядом с текущим положением курсора мыши
-        cursor_pos = QCursor.pos()
-        self.move(cursor_pos.x() + 12, cursor_pos.y() + 12)
-
-        # Автоматически закрываем окно, если пользователь его проигнорировал
-        QTimer.singleShot(10000, self.close)
-
-    def confirm_add(self):
-        word = self.word_edit.text().strip()
-        if word:
-            self.main_app.quick_add_word(word)
-        self.accept()
 
 
 class FolderSuggestionThread(QThread):
@@ -571,7 +501,12 @@ class MainApp(DictionaryUI):
         self.init_tray_icon()
         self.init_autostart_option()
         self.init_background_mode_option()
-        self.init_global_hotkey()
+        self.init_tray_icon()
+        self.init_autostart_option()
+        self.init_background_mode_option()
+
+        # --- НОВАЯ СТРОКА: Инициализация слежения за Ctrl+C ---
+        self.clipboard_monitor = system_integration.ClipboardMonitor(QApplication.instance(), self.quick_add_word)
 
 
     def init_tray_icon(self):
@@ -625,56 +560,6 @@ class MainApp(DictionaryUI):
         else:
             self.statusBar().showMessage(message, 4000)
 
-    def init_global_hotkey(self):
-        """
-        Регистрирует горячую клавишу Ctrl+Alt+W: по нажатию программа копирует то, что
-        выделено в активном приложении Windows, и сразу предлагает добавить это
-        слово в словарь — без открытия окна программы.
-        """
-        self.word_capture = None
-
-        if sys.platform != "win32":
-            self.hotkey_hint_label.setText("Быстрое добавление слов доступно только на Windows.")
-            return
-
-        missing = system_integration.get_missing_dependencies()
-
-        if missing:
-            packages = " ".join(missing)
-            self.hotkey_hint_label.setText(
-                f"Ctrl+Alt+W не работает: не установлены пакеты {packages}."
-            )
-            QMessageBox.warning(
-                self, "Горячая клавиша недоступна",
-                "Ctrl+Alt+W не работает, потому что не установлены необходимые библиотеки.\n\n"
-                f"Откройте командную строку и выполните:\n\npip install {packages}\n\n"
-                "После установки перезапустите программу."
-            )
-            return
-
-        self.word_capture = system_integration.GlobalWordCapture()
-        self.word_capture.word_captured.connect(self.on_text_selected)
-        registered = self.word_capture.start()
-
-        if not registered:
-            self.hotkey_hint_label.setText(
-                "Не удалось зарегистрировать Ctrl+Alt+W (конфликт с другой программой или нужны права администратора)."
-            )
-            QMessageBox.warning(
-                self, "Не удалось включить горячую клавишу",
-                "Не получилось зарегистрировать сочетание Ctrl+Alt+W.\n\n"
-                "Возможные причины:\n"
-                "• Это сочетание уже занято другой программой.\n"
-                "• Нужно запустить программу от имени администратора "
-                "(некоторые системы блокируют низкоуровневый перехват клавиш для обычных пользователей).\n"
-                "• Антивирус блокирует перехват клавиатуры — добавьте программу в исключения."
-            )
-
-    def on_text_selected(self, word):
-        """Показывает окошко с предложением добавить только что выделенное слово в словарь."""
-        self._selection_popup = QuickAddPopup(word, self)
-        self._selection_popup.show()
-
     def init_background_mode_option(self):
         """Загружает сохраненную настройку фонового режима и применяет её."""
         saved_settings = database.load_settings()
@@ -696,8 +581,7 @@ class MainApp(DictionaryUI):
     def apply_background_mode(self, enabled: bool, initial: bool = False):
         """
         Применяет режим фоновой работы:
-        - enabled=True: закрытие окна сворачивает программу в трей, приложение не завершается,
-          горячая клавиша Ctrl+Alt+W продолжает работать.
+        - enabled=True: закрытие окна сворачивает программу в трей, приложение не завершается.
         - enabled=False: закрытие окна полностью завершает программу (обычное поведение).
         """
         self.background_mode = enabled
@@ -713,36 +597,6 @@ class MainApp(DictionaryUI):
                     "Фоновый режим отключен: закрытие окна теперь полностью завершает программу.", 4000
                 )
 
-    def quick_add_word(self, word):
-        """Запускает перевод и сохранение слова, захваченного глобальной горячей клавишей."""
-        self.quick_worker = TranslationThread(word)
-        self.quick_worker.finished.connect(self.on_quick_add_finished)
-        self.quick_worker.error.connect(self.on_quick_add_error)
-        self.quick_worker.start()
-
-    def on_quick_add_finished(self, result):
-        """Сохраняет слово, добавленное через глобальную горячую клавишу, и уведомляет пользователя через трей."""
-        fr_word, transcription, ru_word, examples = result
-        target_folders = [self.active_folder] if self.active_folder else None
-        is_saved = database.save_word(fr_word, transcription, ru_word, examples, folders=target_folders)
-
-        if is_saved:
-            audio_manager.get_audio_path(fr_word)
-            self.tray_icon.showMessage(
-                "Слово добавлено", f"{fr_word} — {ru_word}",
-                QSystemTrayIcon.MessageIcon.Information, 3000
-            )
-            if self.isVisible():
-                self.load_saved_data()
-        else:
-            self.tray_icon.showMessage(
-                "Уже есть в словаре", f"«{fr_word}» уже есть в вашем словаре.",
-                QSystemTrayIcon.MessageIcon.Information, 3000
-            )
-
-    def on_quick_add_error(self, error_message):
-        self.tray_icon.showMessage("Ошибка добавления слова", error_message, QSystemTrayIcon.MessageIcon.Warning, 4000)
-
     def on_tray_activated(self, reason):
         """Разворачивает окно программы по клику/двойному клику на иконку в трее."""
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
@@ -755,29 +609,24 @@ class MainApp(DictionaryUI):
 
     def quit_app(self):
         """Полностью закрывает программу (в отличие от закрытия окна, которое сворачивает в трей)."""
-        if getattr(self, "word_capture", None):
-            self.word_capture.stop()
         self.tray_icon.hide()
         QApplication.quit()
 
     def closeEvent(self, event):
         """
-        Если включен фоновый режим — закрытие окна крестиком сворачивает программу в трей,
-        и горячая клавиша Ctrl+Alt+W продолжает работать. Если фоновый режим выключен —
-        закрытие окна полностью завершает программу (обычное поведение).
+        Если включен фоновый режим — закрытие окна крестиком сворачивает программу в трей.
+        Если фоновый режим выключен — закрытие окна полностью завершает программу (обычное поведение).
         """
         if getattr(self, "background_mode", True):
             event.ignore()
             self.hide()
             self.tray_icon.showMessage(
                 "Словарь свернут в трей",
-                "Программа продолжает работать в фоне. Ctrl+Alt+W скопирует выделенное слово и предложит добавить его в словарь.",
+                "Программа продолжает работать в фоне.",
                 QSystemTrayIcon.MessageIcon.Information,
                 4000
             )
         else:
-            if getattr(self, "word_capture", None):
-                self.word_capture.stop()
             self.tray_icon.hide()
             event.accept()
 
@@ -1015,6 +864,16 @@ class MainApp(DictionaryUI):
         self.worker.finished.connect(self.on_translation_success)
         self.worker.error.connect(self.on_translation_error)
         self.worker.start()
+
+    def quick_add_word(self, word: str):
+        """Метод вызывается при нажатии на всплывающий кружочек."""
+        # Разворачиваем окно, если оно было скрыто в трее
+        if self.isHidden():
+            self.show_from_tray()
+            
+        # Вставляем слово в инпут и запускаем перевод
+        self.word_input.setText(word)
+        self.start_translation()
 
     def on_translation_success(self, result):
         """Срабатывает, когда API успешно вернул данные слова."""
