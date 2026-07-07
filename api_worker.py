@@ -81,7 +81,7 @@ def get_full_word_data(user_input: str):
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="gemini-2.5-flash",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
