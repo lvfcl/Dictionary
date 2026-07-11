@@ -66,6 +66,14 @@ class DictionaryUI(QMainWindow):
         settings_row.addWidget(self.background_mode_checkbox)
 
         settings_row.addStretch()
+
+        self.rules_button = QPushButton("📖 Правила языка")
+        self.rules_button.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        self.rules_button.setFixedHeight(32)
+        self.rules_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.rules_button.setToolTip("Открыть справочник по грамматике французского языка")
+        settings_row.addWidget(self.rules_button)
+
         main_layout.addLayout(settings_row)
 
         content_layout = QHBoxLayout()
@@ -148,7 +156,7 @@ class DictionaryUI(QMainWindow):
         self.details_panel = QTextBrowser()
         self.details_panel.setPlaceholderText("Нажмите на слово в таблице, чтобы увидеть подробную информацию с примерами от ИИ...")
         self.details_panel.setFont(QFont("Arial", 11))
-        self.details_panel.setMinimumWidth(320)
+        self.details_panel.setMinimumWidth(220)
         details_layout.addWidget(self.details_panel)
 
         content_layout.addWidget(details_container, stretch=1)

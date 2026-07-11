@@ -13,6 +13,7 @@ from PyQt6.QtGui import QFont, QAction
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from ui_main import DictionaryUI
+from rules_dialog import RulesDialog
 import database
 import api_worker
 import audio_manager
@@ -494,6 +495,7 @@ class MainApp(DictionaryUI):
         self.delete_folder_btn.clicked.connect(self.delete_selected_folder)
         self.show_all_words_btn.clicked.connect(self.show_all_words)
         self.populate_folder_btn.clicked.connect(self.open_ai_populate_dialog)
+        self.rules_button.clicked.connect(self.open_rules_dialog)
 
         self.load_folders_list()
         self.load_saved_data()
@@ -706,6 +708,11 @@ class MainApp(DictionaryUI):
         dialog = AssignFolderDialog(french_word, self)
         if dialog.exec():
             self.load_saved_data()
+
+    def open_rules_dialog(self):
+        """Открывает справочник с правилами французской грамматики."""
+        dialog = RulesDialog(self)
+        dialog.exec()
 
     def open_ai_populate_dialog(self):
         """Запускает анализ ИИ: какие из уже сохраненных слов подходят по теме текущей папки."""
