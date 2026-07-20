@@ -13,7 +13,7 @@ from PyQt6.QtGui import QFont, QAction
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from ui_main import DictionaryUI
-from rules_dialog import RulesDialog
+from rules_dialog import RulesDialog, RULES_SECTIONS
 import database
 import api_worker
 import audio_manager
@@ -514,12 +514,16 @@ class MainApp(DictionaryUI):
         self.populate_folder_btn.clicked.connect(self.open_ai_populate_dialog)
         self.rules_button.clicked.connect(self.open_rules_dialog)
 
+        for index, rule_btn in enumerate(self.rules_category_buttons):
+            rule_btn.clicked.connect(lambda checked, idx=index: self.select_rule_category(idx))
+
         self.load_folders_list()
         self.load_saved_data()
 
         self.init_tray_icon()
         self.init_autostart_option()
         self.init_background_mode_option()
+        self.init_rules_mode_option()
         self.init_tray_icon()
         self.init_autostart_option()
         self.init_background_mode_option()
@@ -587,6 +591,22 @@ class MainApp(DictionaryUI):
         self.background_mode_checkbox.setChecked(background_enabled)
         self.background_mode_checkbox.stateChanged.connect(self.toggle_background_mode)
         self.apply_background_mode(background_enabled, initial=True)
+
+    def init_rules_mode_option(self):
+        """Загружает сохраненную настройку того, как открывать окно с правилами."""
+        saved_settings = database.load_settings()
+        replace_main = saved_settings.get("rules_replace_main", False)
+
+        self.rules_replace_main_checkbox.setChecked(replace_main)
+        self.rules_replace_main_checkbox.stateChanged.connect(self.toggle_rules_mode)
+
+    def toggle_rules_mode(self, state):
+        """Сохраняет выбор пользователя: правила отдельным окном или вместо главного."""
+        replace_main = (state == Qt.CheckState.Checked.value)
+
+        settings = database.load_settings()
+        settings["rules_replace_main"] = replace_main
+        database.save_settings(settings)
 
     def toggle_background_mode(self, state):
         """Включает/выключает фоновый режим (работу программы после закрытия окна) и сохраняет выбор."""
@@ -727,9 +747,31 @@ class MainApp(DictionaryUI):
             self.load_saved_data()
 
     def open_rules_dialog(self):
-        """Открывает справочник с правилами французской грамматики."""
-        dialog = RulesDialog(self)
-        dialog.exec()
+        """
+        Показывает справочник с правилами французской грамматики.
+        В зависимости от настройки self.rules_replace_main_checkbox:
+        - выключено (по умолчанию): правила открываются отдельным окном поверх главного
+          (там кнопки с названиями правил тоже расположены вертикально);
+        - включено: в колонке "подробно о слове" (details_panel) появляется
+          вертикальный столбец кнопок с названиями правил; клик по кнопке
+          открывает соответствующее правило справа.
+        """
+        settings = database.load_settings()
+        replace_main = settings.get("rules_replace_main", False)
+
+        if replace_main:
+            self.rules_buttons_container.show()
+            self.select_rule_category(0)
+        else:
+            dialog = RulesDialog(self)
+            dialog.exec()
+
+    def select_rule_category(self, index):
+        """Показывает выбранное правило в колонке слова и подсвечивает нажатую кнопку."""
+        title, html = RULES_SECTIONS[index]
+        self.details_panel.setHtml(html)
+        for i, btn in enumerate(self.rules_category_buttons):
+            btn.setChecked(i == index)
 
     def open_ai_populate_dialog(self):
         """Запускает анализ ИИ: какие из уже сохраненных слов подходят по теме текущей папки."""
@@ -813,6 +855,7 @@ class MainApp(DictionaryUI):
                     audio_manager.delete_audio(french_word)
                     self.load_saved_data()
                     self.details_panel.clear()
+                    self.rules_buttons_container.hide()
                     self.current_word = ""
                     self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
                 else:
@@ -850,6 +893,7 @@ class MainApp(DictionaryUI):
                 
                 if hasattr(self, 'details_panel'):
                     self.details_panel.clear()
+                    self.rules_buttons_container.hide()
                     self.current_word = ""
                     
                 self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
@@ -940,6 +984,8 @@ class MainApp(DictionaryUI):
 
     def show_word_details(self, item):
         """Находит кликнутое слово в базе данных и выводит детальную карточку."""
+        self.rules_buttons_container.hide()
+
         row = item.row()
         french_word = self.table.item(row, 0).text()
         

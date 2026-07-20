@@ -1,10 +1,12 @@
 """
 Окно "Правила" - справочник по базовой грамматике французского языка,
-доступный по кнопке в главном окне. Организован как несколько вкладок
-(QTabWidget), каждая из которых - статичная HTML-страница в QTextBrowser.
+доступный по кнопке в главном окне. Слева расположены кнопки с названиями
+правил, выстроенные вертикально; при нажатии на кнопку справа открывается
+соответствующая статичная HTML-страница в QTextBrowser.
 """
 
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTabWidget, QTextBrowser
+from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+                              QStackedWidget, QTextBrowser)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
@@ -90,6 +92,22 @@ _PRONUNCIATION_HTML = """
 </table>
 """
 
+RULES_SECTIONS = [
+    ("Артикли и род", _ARTICLES_HTML),
+    ("Множ. число", _PLURAL_HTML),
+    ("Произношение", _PRONUNCIATION_HTML),
+]
+
+
+def get_all_rules_html():
+    """
+    Возвращает все разделы правил, объединенные в одну HTML-страницу —
+    используется, когда правила показываются на месте колонки "подробно
+    о слове" (вместо отдельного окна RulesDialog).
+    """
+    return "<hr>".join(html for _, html in RULES_SECTIONS)
+
+
 class RulesDialog(QDialog):
     """Окно-справочник с базовыми правилами французской грамматики."""
 
@@ -98,49 +116,68 @@ class RulesDialog(QDialog):
         self.setWindowTitle("Правила французского языка")
         self.resize(650, 550)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
+        outer_layout = QHBoxLayout(self)
+        outer_layout.setContentsMargins(15, 15, 15, 15)
+        outer_layout.setSpacing(10)
 
-        tabs = QTabWidget()
-        tabs.setFont(QFont("Arial", 10))
+        # Вертикальный столбец кнопок с названиями правил (слева)
+        buttons_container = QWidget()
+        buttons_container.setFixedWidth(160)
+        buttons_layout = QVBoxLayout(buttons_container)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(6)
 
-        for title, html in (
-            ("Артикли и род", _ARTICLES_HTML),
-            ("Множ. число", _PLURAL_HTML),
-            ("Произношение", _PRONUNCIATION_HTML),
-        ):
+        self.pages = QStackedWidget()
+
+        for title, html in RULES_SECTIONS:
             browser = QTextBrowser()
             browser.setFont(QFont("Arial", 11))
             browser.setHtml(html)
-            tabs.addTab(browser, title)
+            page_index = self.pages.addWidget(browser)
 
-        layout.addWidget(tabs)
+            btn = QPushButton(title)
+            btn.setFont(QFont("Arial", 10))
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, idx=page_index, b=btn: self._show_page(idx, b))
+            buttons_layout.addWidget(btn)
+
+        buttons_layout.addStretch()
+
+        self.rule_buttons = [buttons_layout.itemAt(i).widget() for i in range(buttons_layout.count() - 1)]
+        self.rule_buttons[0].setChecked(True)
+
+        outer_layout.addWidget(buttons_container)
+        outer_layout.addWidget(self.pages, stretch=1)
 
         self.setStyleSheet("""
             QDialog {
                 background-color: #F8F9FA;
             }
-            QTabWidget::pane {
-                border: 1px solid #E0E0E0;
-                border-radius: 6px;
-                background-color: #FFFFFF;
-            }
-            QTabBar::tab {
+            QPushButton {
                 background-color: #E2E8F0;
                 color: #4A5568;
                 padding: 8px 16px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                margin-right: 2px;
+                border: none;
+                border-radius: 6px;
+                text-align: left;
             }
-            QTabBar::tab:selected {
+            QPushButton:checked {
                 background-color: #4A90E2;
                 color: white;
                 font-weight: bold;
             }
             QTextBrowser {
-                border: none;
+                border: 1px solid #E0E0E0;
+                border-radius: 6px;
+                background-color: #FFFFFF;
                 color: #333333;
                 padding: 10px;
             }
         """)
+
+    def _show_page(self, index, clicked_button):
+        """Переключает видимую страницу и подсвечивает нажатую кнопку как выбранную."""
+        self.pages.setCurrentIndex(index)
+        for btn in self.rule_buttons:
+            btn.setChecked(btn is clicked_button)
