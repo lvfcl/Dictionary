@@ -82,26 +82,30 @@ class FolderSuggestionDialog(QDialog):
 
         self.counter_label = QLabel(self)
         self.counter_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.counter_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.counter_label)
 
         self.word_label = QLabel(self)
         self.word_label.setFont(QFont("Arial", 22, QFont.Weight.Bold))
         self.word_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.word_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.word_label)
 
         self.trans_label = QLabel(self)
         self.trans_label.setFont(QFont("Arial", 13))
-        self.trans_label.setStyleSheet("color: gray;")
+        self.trans_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         self.trans_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.trans_label)
 
         self.ru_label = QLabel(self)
         self.ru_label.setFont(QFont("Arial", 16))
         self.ru_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ru_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.ru_label)
 
         self.examples_browser = QTextBrowser(self)
         self.examples_browser.setMaximumHeight(140)
+        self.examples_browser.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.examples_browser)
 
         buttons_layout = QHBoxLayout()
@@ -183,9 +187,11 @@ class AssignFolderDialog(QDialog):
 
         info_label = QLabel("Отметьте папки, в которые нужно добавить слово:")
         info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(info_label)
 
         self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet("color: #f5a623; font-weight: bold;")
         for folder_name in self.all_folders:
             item = QListWidgetItem(folder_name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -197,7 +203,7 @@ class AssignFolderDialog(QDialog):
 
         if not self.all_folders:
             empty_label = QLabel("Папок пока нет. Сначала создайте папку в левой панели.")
-            empty_label.setStyleSheet("color: gray;")
+            empty_label.setStyleSheet("color: #f5a623; font-weight: bold;")
             empty_label.setWordWrap(True)
             layout.addWidget(empty_label)
 
@@ -243,20 +249,27 @@ class ReviewSetupDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout()
 
-        layout.addWidget(QLabel("Откуда брать слова:"))
+        source_title = QLabel("Откуда брать слова:")
+        source_title.setStyleSheet("color: #f5a623; font-weight: bold;")
+        layout.addWidget(source_title)
 
         self.source_combo = QComboBox()
+        self.source_combo.setStyleSheet("color: #f5a623; font-weight: bold;")
         self.source_combo.addItem("Все слова")
         self.source_combo.addItems(database.load_folders())
         self.source_combo.currentIndexChanged.connect(self.update_due_count)
         layout.addWidget(self.source_combo)
 
         self.due_label = QLabel()
+        self.due_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.due_label)
 
-        layout.addWidget(QLabel("Сколько слов взять в колоду:"))
+        count_title = QLabel("Сколько слов взять в колоду:")
+        count_title.setStyleSheet("color: #f5a623; font-weight: bold;")
+        layout.addWidget(count_title)
 
         self.count_spin = QSpinBox()
+        self.count_spin.setStyleSheet("color: #f5a623; font-weight: bold;")
         self.count_spin.setMinimum(1)
         layout.addWidget(self.count_spin)
 
@@ -341,6 +354,7 @@ class ReviewDialog(QDialog):
         
         self.counter_label = QLabel(self)
         self.counter_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.counter_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.counter_label)
         
         word_row = QHBoxLayout()
@@ -349,6 +363,7 @@ class ReviewDialog(QDialog):
         self.word_label = QLabel(self)
         self.word_label.setFont(QFont("Arial", 24, QFont.Weight.Bold))
         self.word_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.word_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         word_row.addWidget(self.word_label)
 
         self.review_audio_btn = QPushButton("🔊", self)
@@ -372,16 +387,18 @@ class ReviewDialog(QDialog):
         self.trans_label = QLabel(self)
         self.trans_label.setFont(QFont("Arial", 14))
         self.trans_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.trans_label.setStyleSheet("color: gray;")
+        self.trans_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         answer_layout.addWidget(self.trans_label)
         
         self.ru_label = QLabel(self)
         self.ru_label.setFont(QFont("Arial", 18, QFont.Weight.Medium))
         self.ru_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ru_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         answer_layout.addWidget(self.ru_label)
         
         self.examples_browser = QTextBrowser(self)
         self.examples_browser.setMaximumHeight(120)
+        self.examples_browser.setStyleSheet("color: #f5a623; font-weight: bold;")
         answer_layout.addWidget(self.examples_browser)
         
         layout.addWidget(self.answer_box)

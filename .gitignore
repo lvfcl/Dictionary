@@ -184,3 +184,5 @@ cython_debug/
 .cursorindexingignore
 /old
 /audio_cache
+/app
+/mobile
