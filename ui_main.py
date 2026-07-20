@@ -74,6 +74,17 @@ class DictionaryUI(QMainWindow):
         self.rules_button.setToolTip("Открыть справочник по грамматике французского языка")
         settings_row.addWidget(self.rules_button)
 
+        self.rules_replace_main_checkbox = QCheckBox("Правила в колонке слова")
+        self.rules_replace_main_checkbox.setFont(QFont("Arial", 10))
+        self.rules_replace_main_checkbox.setStyleSheet("color: #3d4e91;")
+        self.rules_replace_main_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.rules_replace_main_checkbox.setToolTip(
+            "Если включено — по кнопке «Правила языка» текст правил появляется\n"
+            "на месте колонки «подробно о слове» справа.\n"
+            "Если выключено — правила открываются отдельным окном."
+        )
+        settings_row.addWidget(self.rules_replace_main_checkbox)
+
         main_layout.addLayout(settings_row)
 
         content_layout = QHBoxLayout()
@@ -153,11 +164,52 @@ class DictionaryUI(QMainWindow):
         details_layout.setContentsMargins(0, 0, 0, 0)
         details_layout.setSpacing(8)
 
+        details_content_row = QHBoxLayout()
+        details_content_row.setSpacing(8)
+
+        # Вертикальный столбец кнопок с названиями правил - показывается только
+        # в режиме "Правила в колонке слова" (вместо колонки "подробно о слове").
+        self.rules_buttons_container = QWidget()
+        self.rules_buttons_container.setFixedWidth(140)
+        rules_buttons_layout = QVBoxLayout(self.rules_buttons_container)
+        rules_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        rules_buttons_layout.setSpacing(6)
+
+        self.rules_category_buttons = []
+        for title in ("Артикли и род", "Множ. число", "Произношение"):
+            rule_btn = QPushButton(title)
+            rule_btn.setFont(QFont("Arial", 10))
+            rule_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            rule_btn.setCheckable(True)
+            rule_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #E2E8F0;
+                    color: #4A5568;
+                    padding: 8px 10px;
+                    border: none;
+                    border-radius: 6px;
+                    text-align: left;
+                }
+                QPushButton:checked {
+                    background-color: #4A90E2;
+                    color: white;
+                    font-weight: bold;
+                }
+            """)
+            rules_buttons_layout.addWidget(rule_btn)
+            self.rules_category_buttons.append(rule_btn)
+        rules_buttons_layout.addStretch()
+
+        self.rules_buttons_container.hide()
+        details_content_row.addWidget(self.rules_buttons_container)
+
         self.details_panel = QTextBrowser()
         self.details_panel.setPlaceholderText("Нажмите на слово в таблице, чтобы увидеть подробную информацию с примерами от ИИ...")
         self.details_panel.setFont(QFont("Arial", 11))
         self.details_panel.setMinimumWidth(220)
-        details_layout.addWidget(self.details_panel)
+        details_content_row.addWidget(self.details_panel, stretch=1)
+
+        details_layout.addLayout(details_content_row)
 
         content_layout.addWidget(details_container, stretch=1)
 
