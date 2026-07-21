@@ -763,8 +763,8 @@ class MainApp(DictionaryUI):
             self.rules_buttons_container.show()
             self.select_rule_category(0)
         else:
-            dialog = RulesDialog(self)
-            dialog.exec()
+            self.rules_dialog = RulesDialog(self)
+            self.rules_dialog.show()
 
     def select_rule_category(self, index):
         """Показывает выбранное правило в колонке слова и подсвечивает нажатую кнопку."""
