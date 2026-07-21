@@ -1,7 +1,8 @@
 import sys
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QLabel, QTextBrowser, QListWidget, QCheckBox)
+                             QHeaderView, QLabel, QTextBrowser, QListWidget, QCheckBox,
+                             QSplitter)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
@@ -87,8 +88,9 @@ class DictionaryUI(QMainWindow):
 
         main_layout.addLayout(settings_row)
 
-        content_layout = QHBoxLayout()
-        content_layout.setSpacing(15)
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        content_splitter.setChildrenCollapsible(False)
+        content_splitter.setHandleWidth(6)
 
         # --- Панель папок (категорий слов) ---
         folders_container = QWidget()
@@ -132,8 +134,8 @@ class DictionaryUI(QMainWindow):
         self.populate_folder_btn.setEnabled(False)
         folders_layout.addWidget(self.populate_folder_btn)
 
-        folders_container.setFixedWidth(200)
-        content_layout.addWidget(folders_container, stretch=0)
+        folders_container.setMinimumWidth(140)
+        content_splitter.addWidget(folders_container)
 
         self.table = QTableWidget()
         self.table.setColumnCount(6)
@@ -157,20 +159,21 @@ class DictionaryUI(QMainWindow):
         self.table.setWordWrap(True)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         
-        content_layout.addWidget(self.table, stretch=2)
+        content_splitter.addWidget(self.table)
 
         details_container = QWidget()
         details_layout = QVBoxLayout(details_container)
         details_layout.setContentsMargins(0, 0, 0, 0)
         details_layout.setSpacing(8)
 
-        details_content_row = QHBoxLayout()
-        details_content_row.setSpacing(8)
+        details_splitter = QSplitter(Qt.Orientation.Horizontal)
+        details_splitter.setChildrenCollapsible(False)
+        details_splitter.setHandleWidth(6)
 
         # Вертикальный столбец кнопок с названиями правил - показывается только
         # в режиме "Правила в колонке слова" (вместо колонки "подробно о слове").
         self.rules_buttons_container = QWidget()
-        self.rules_buttons_container.setFixedWidth(140)
+        self.rules_buttons_container.setMinimumWidth(100)
         rules_buttons_layout = QVBoxLayout(self.rules_buttons_container)
         rules_buttons_layout.setContentsMargins(0, 0, 0, 0)
         rules_buttons_layout.setSpacing(6)
@@ -201,19 +204,25 @@ class DictionaryUI(QMainWindow):
         rules_buttons_layout.addStretch()
 
         self.rules_buttons_container.hide()
-        details_content_row.addWidget(self.rules_buttons_container)
+        details_splitter.addWidget(self.rules_buttons_container)
 
         self.details_panel = QTextBrowser()
         self.details_panel.setPlaceholderText("Нажмите на слово в таблице, чтобы увидеть подробную информацию с примерами от ИИ...")
         self.details_panel.setFont(QFont("Arial", 11))
         self.details_panel.setMinimumWidth(220)
-        details_content_row.addWidget(self.details_panel, stretch=1)
+        details_splitter.addWidget(self.details_panel)
+        details_splitter.setStretchFactor(0, 0)
+        details_splitter.setStretchFactor(1, 1)
 
-        details_layout.addLayout(details_content_row)
+        details_layout.addWidget(details_splitter)
 
-        content_layout.addWidget(details_container, stretch=1)
+        content_splitter.addWidget(details_container)
+        content_splitter.setStretchFactor(0, 0)
+        content_splitter.setStretchFactor(1, 2)
+        content_splitter.setStretchFactor(2, 1)
+        content_splitter.setSizes([200, 700, 350])
 
-        main_layout.addLayout(content_layout)
+        main_layout.addWidget(content_splitter, stretch=1)
 
         self.review_button = QPushButton("Учить слова")
         self.review_button.setFont(QFont("Arial", 11, QFont.Weight.Bold))
