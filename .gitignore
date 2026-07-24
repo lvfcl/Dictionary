@@ -186,3 +186,5 @@ cython_debug/
 /audio_cache
 /app
 /mobile
+/nn
+/nn/*

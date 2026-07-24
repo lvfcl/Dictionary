@@ -34,6 +34,7 @@ def load_words():
             # Для слов, сохраненных до появления папок, гарантируем наличие ключа "folders"
             for word in words:
                 word.setdefault("folders", [])
+                word.setdefault("examples_pending", False)
             return words
     except json.JSONDecodeError:
         print("Предупреждение: Файл базы данных поврежден или пуст. Возвращен пустой список.")
@@ -42,11 +43,14 @@ def load_words():
         print(f"Не удалось прочитать базу данных: {e}")
         return []
 
-def save_word(french: str, transcription: str, russian: str, examples: list = None, folders: list = None) -> bool:
+def save_word(french: str, transcription: str, russian: str, examples: list = None,
+              folders: list = None, examples_pending: bool = False) -> bool:
     """
     Добавляет новое слово с базовыми параметрами интервального повторения.
 
     :param folders: список названий папок, в которые сразу нужно поместить слово
+    :param examples_pending: True, если примеры не удалось найти из-за отсутствия
+        интернета в момент поиска — их дозаполнит sync_pending_examples() позже
     """
     try:
         words = load_words()
@@ -56,6 +60,7 @@ def save_word(french: str, transcription: str, russian: str, examples: list = No
             "transcription": transcription.strip(),
             "russian": russian.strip(),
             "examples": examples if examples else [],
+            "examples_pending": examples_pending,
             "folders": folders if folders else [],
             "interval": 1,
             "ease_factor": 2.5,
@@ -294,4 +299,61 @@ def save_settings(settings: dict) -> bool:
     except Exception as e:
         print(f"Ошибка при сохранении настроек: {e}")
         return False
+
+
+# ------------------------- Примеры, ожидающие дозаполнения (нет было сети) -------------------------
+
+def get_words_with_pending_examples() -> list:
+    """Возвращает слова, у которых ещё не найдены примеры (сохранялись без сети)."""
+    words = load_words()
+    return [w for w in words if w.get("examples_pending")]
+
+
+def update_word_examples(french_word: str, examples: list) -> bool:
+    """Записывает найденные примеры для слова и снимает флаг ожидания."""
+    words = load_words()
+    updated = False
+
+    for word in words:
+        if word.get("french", "").lower() == french_word.lower():
+            word["examples"] = examples
+            word["examples_pending"] = False
+            updated = True
+            break
+
+    if updated:
+        try:
+            with open(DB_FILE, 'w', encoding='utf-8') as f:
+                json.dump(words, f, ensure_ascii=False, indent=4)
+            return True
+        except Exception as e:
+            print(f"Ошибка при обновлении примеров для '{french_word}': {e}")
+            return False
+
+    return False
+
+
+def sync_pending_examples(fetch_examples_fn) -> int:
+    """
+    Проходит по всем словам с examples_pending=True и пытается дозаполнить
+    примеры. Вызывать при старте приложения и/или по таймеру, когда есть сеть.
+
+    :param fetch_examples_fn: функция вида (french_bare: str, russian: str) ->
+        (examples, still_pending), например offline_word_lookup.get_examples_for_word
+    :return: сколько слов удалось успешно дозаполнить
+    """
+    pending = get_words_with_pending_examples()
+    filled_count = 0
+
+    for word in pending:
+        # грубо убираем артикль le/la/l' перед повторным поиском
+        bare_word = word["french"].split(" ", 1)[-1].lstrip("'")
+        examples, still_pending = fetch_examples_fn(bare_word, word.get("russian", ""))
+
+        if not still_pending:
+            update_word_examples(word["french"], examples)
+            if examples:
+                filled_count += 1
+
+    return filled_count
 

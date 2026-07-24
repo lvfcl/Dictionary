@@ -13,9 +13,10 @@ from PyQt6.QtGui import QFont, QAction
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from ui_main import DictionaryUI
-from rules_dialog import RulesDialog, RULES_SECTIONS
+from rules_dialog import RulesDialog
 import database
-import api_worker
+import api_worker  # используется только для suggest_matching_words (подбор слов по папкам)
+import offline_word_lookup  # перевод/род/транскрипция офлайн + примеры через LLM
 import audio_manager
 import system_integration
 
@@ -31,13 +32,26 @@ class TranslationThread(QThread):
 
     def run(self):
         try:
-            result = api_worker.get_full_word_data(self.word)
+            result = offline_word_lookup.get_full_word_data(self.word)
             if result and result[0]:
                 self.finished.emit(result)
             else:
                 self.error.emit("Слово не найдено или ошибка перевода.")
         except Exception as e:
             self.error.emit(str(e))
+
+
+class ExamplesSyncThread(QThread):
+    """Фоновая попытка дозаполнить примеры для слов, сохранённых без интернета."""
+    finished = pyqtSignal(int)
+
+    def run(self):
+        try:
+            filled = database.sync_pending_examples(offline_word_lookup.get_examples_for_word)
+            self.finished.emit(filled)
+        except Exception as e:
+            print(f"Ошибка при синхронизации примеров: {e}")
+            self.finished.emit(0)
 
 
 class FolderSuggestionThread(QThread):
@@ -82,30 +96,26 @@ class FolderSuggestionDialog(QDialog):
 
         self.counter_label = QLabel(self)
         self.counter_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.counter_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.counter_label)
 
         self.word_label = QLabel(self)
         self.word_label.setFont(QFont("Arial", 22, QFont.Weight.Bold))
         self.word_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.word_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.word_label)
 
         self.trans_label = QLabel(self)
         self.trans_label.setFont(QFont("Arial", 13))
-        self.trans_label.setStyleSheet("color: #f5a623; font-weight: bold;")
+        self.trans_label.setStyleSheet("color: gray;")
         self.trans_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.trans_label)
 
         self.ru_label = QLabel(self)
         self.ru_label.setFont(QFont("Arial", 16))
         self.ru_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.ru_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.ru_label)
 
         self.examples_browser = QTextBrowser(self)
         self.examples_browser.setMaximumHeight(140)
-        self.examples_browser.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.examples_browser)
 
         buttons_layout = QHBoxLayout()
@@ -187,11 +197,9 @@ class AssignFolderDialog(QDialog):
 
         info_label = QLabel("Отметьте папки, в которые нужно добавить слово:")
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(info_label)
 
         self.list_widget = QListWidget()
-        self.list_widget.setStyleSheet("color: #f5a623; font-weight: bold;")
         for folder_name in self.all_folders:
             item = QListWidgetItem(folder_name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -203,7 +211,7 @@ class AssignFolderDialog(QDialog):
 
         if not self.all_folders:
             empty_label = QLabel("Папок пока нет. Сначала создайте папку в левой панели.")
-            empty_label.setStyleSheet("color: #f5a623; font-weight: bold;")
+            empty_label.setStyleSheet("color: gray;")
             empty_label.setWordWrap(True)
             layout.addWidget(empty_label)
 
@@ -249,27 +257,20 @@ class ReviewSetupDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout()
 
-        source_title = QLabel("Откуда брать слова:")
-        source_title.setStyleSheet("color: #f5a623; font-weight: bold;")
-        layout.addWidget(source_title)
+        layout.addWidget(QLabel("Откуда брать слова:"))
 
         self.source_combo = QComboBox()
-        self.source_combo.setStyleSheet("color: #f5a623; font-weight: bold;")
         self.source_combo.addItem("Все слова")
         self.source_combo.addItems(database.load_folders())
         self.source_combo.currentIndexChanged.connect(self.update_due_count)
         layout.addWidget(self.source_combo)
 
         self.due_label = QLabel()
-        self.due_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.due_label)
 
-        count_title = QLabel("Сколько слов взять в колоду:")
-        count_title.setStyleSheet("color: #f5a623; font-weight: bold;")
-        layout.addWidget(count_title)
+        layout.addWidget(QLabel("Сколько слов взять в колоду:"))
 
         self.count_spin = QSpinBox()
-        self.count_spin.setStyleSheet("color: #f5a623; font-weight: bold;")
         self.count_spin.setMinimum(1)
         layout.addWidget(self.count_spin)
 
@@ -354,7 +355,6 @@ class ReviewDialog(QDialog):
         
         self.counter_label = QLabel(self)
         self.counter_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.counter_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         layout.addWidget(self.counter_label)
         
         word_row = QHBoxLayout()
@@ -363,7 +363,6 @@ class ReviewDialog(QDialog):
         self.word_label = QLabel(self)
         self.word_label.setFont(QFont("Arial", 24, QFont.Weight.Bold))
         self.word_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.word_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         word_row.addWidget(self.word_label)
 
         self.review_audio_btn = QPushButton("🔊", self)
@@ -387,18 +386,16 @@ class ReviewDialog(QDialog):
         self.trans_label = QLabel(self)
         self.trans_label.setFont(QFont("Arial", 14))
         self.trans_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.trans_label.setStyleSheet("color: #f5a623; font-weight: bold;")
+        self.trans_label.setStyleSheet("color: gray;")
         answer_layout.addWidget(self.trans_label)
         
         self.ru_label = QLabel(self)
         self.ru_label.setFont(QFont("Arial", 18, QFont.Weight.Medium))
         self.ru_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.ru_label.setStyleSheet("color: #f5a623; font-weight: bold;")
         answer_layout.addWidget(self.ru_label)
         
         self.examples_browser = QTextBrowser(self)
         self.examples_browser.setMaximumHeight(120)
-        self.examples_browser.setStyleSheet("color: #f5a623; font-weight: bold;")
         answer_layout.addWidget(self.examples_browser)
         
         layout.addWidget(self.answer_box)
@@ -513,9 +510,9 @@ class MainApp(DictionaryUI):
         self.show_all_words_btn.clicked.connect(self.show_all_words)
         self.populate_folder_btn.clicked.connect(self.open_ai_populate_dialog)
         self.rules_button.clicked.connect(self.open_rules_dialog)
-
-        for index, rule_btn in enumerate(self.rules_category_buttons):
-            rule_btn.clicked.connect(lambda checked, idx=index: self.select_rule_category(idx))
+        self.rules_replace_main_checkbox.stateChanged.connect(self.on_rules_mode_toggled)
+        for i, btn in enumerate(self.rules_category_buttons):
+            btn.clicked.connect(lambda checked, idx=i: self.on_rule_category_clicked(idx))
 
         self.load_folders_list()
         self.load_saved_data()
@@ -523,13 +520,25 @@ class MainApp(DictionaryUI):
         self.init_tray_icon()
         self.init_autostart_option()
         self.init_background_mode_option()
-        self.init_rules_mode_option()
         self.init_tray_icon()
         self.init_autostart_option()
         self.init_background_mode_option()
 
         # --- НОВАЯ СТРОКА: Инициализация слежения за Ctrl+C ---
         self.clipboard_monitor = system_integration.ClipboardMonitor(QApplication.instance(), self.quick_add_word)
+
+        # Пробуем дозаполнить примеры для слов, сохранённых без интернета
+        self.start_examples_sync()
+
+    def start_examples_sync(self):
+        """Запускает в фоне попытку дозаполнить примеры для слов с examples_pending=True."""
+        self.sync_worker = ExamplesSyncThread()
+        self.sync_worker.finished.connect(self.on_examples_synced)
+        self.sync_worker.start()
+
+    def on_examples_synced(self, filled_count):
+        if filled_count > 0:
+            self.load_saved_data()  # обновляем таблицу/детали, если что-то дозаполнилось
 
 
     def init_tray_icon(self):
@@ -591,22 +600,6 @@ class MainApp(DictionaryUI):
         self.background_mode_checkbox.setChecked(background_enabled)
         self.background_mode_checkbox.stateChanged.connect(self.toggle_background_mode)
         self.apply_background_mode(background_enabled, initial=True)
-
-    def init_rules_mode_option(self):
-        """Загружает сохраненную настройку того, как открывать окно с правилами."""
-        saved_settings = database.load_settings()
-        replace_main = saved_settings.get("rules_replace_main", False)
-
-        self.rules_replace_main_checkbox.setChecked(replace_main)
-        self.rules_replace_main_checkbox.stateChanged.connect(self.toggle_rules_mode)
-
-    def toggle_rules_mode(self, state):
-        """Сохраняет выбор пользователя: правила отдельным окном или вместо главного."""
-        replace_main = (state == Qt.CheckState.Checked.value)
-
-        settings = database.load_settings()
-        settings["rules_replace_main"] = replace_main
-        database.save_settings(settings)
 
     def toggle_background_mode(self, state):
         """Включает/выключает фоновый режим (работу программы после закрытия окна) и сохраняет выбор."""
@@ -747,31 +740,47 @@ class MainApp(DictionaryUI):
             self.load_saved_data()
 
     def open_rules_dialog(self):
-        """
-        Показывает справочник с правилами французской грамматики.
-        В зависимости от настройки self.rules_replace_main_checkbox:
-        - выключено (по умолчанию): правила открываются отдельным окном поверх главного
-          (там кнопки с названиями правил тоже расположены вертикально);
-        - включено: в колонке "подробно о слове" (details_panel) появляется
-          вертикальный столбец кнопок с названиями правил; клик по кнопке
-          открывает соответствующее правило справа.
-        """
-        settings = database.load_settings()
-        replace_main = settings.get("rules_replace_main", False)
-
-        if replace_main:
-            self.rules_buttons_container.show()
-            self.select_rule_category(0)
+        """Открывает правила — отдельным окном или в панели справа, смотря по чекбоксу."""
+        if self.rules_replace_main_checkbox.isChecked():
+            self.show_rules_in_panel()
         else:
             dialog = RulesDialog(self)
             dialog.exec()
 
-    def select_rule_category(self, index):
-        """Показывает выбранное правило в колонке слова и подсвечивает нажатую кнопку."""
-        title, html = RULES_SECTIONS[index]
-        self.details_panel.setHtml(html)
+    def show_rules_in_panel(self):
+        """Показывает список категорий правил вместо колонки 'подробно о слове'."""
+        self.rules_buttons_container.show()
+        if self.rules_category_buttons:
+            self.on_rule_category_clicked(0)
+
+    def on_rule_category_clicked(self, index):
+        """Показывает HTML выбранной категории правил в details_panel."""
+        from rules_dialog import _ARTICLES_HTML, _PLURAL_HTML, _PRONUNCIATION_HTML
+        htmls = [_ARTICLES_HTML, _PLURAL_HTML, _PRONUNCIATION_HTML]
+
         for i, btn in enumerate(self.rules_category_buttons):
             btn.setChecked(i == index)
+
+        self.details_panel.setHtml(htmls[index])
+
+    def on_rules_mode_toggled(self):
+        """Если галочку сняли — прячем панель категорий и возвращаем обычные детали слова."""
+        if self.rules_replace_main_checkbox.isChecked():
+            return
+
+        self.rules_buttons_container.hide()
+
+        if self.current_word:
+            words = database.load_words()
+            target_word = next((w for w in words if w.get("french") == self.current_word), None)
+            if target_word:
+                self.render_details_html(
+                    target_word.get("french", ""),
+                    target_word.get("transcription", ""),
+                    target_word.get("russian", ""),
+                    target_word.get("examples", []),
+                    target_word.get("examples_pending", False)
+                )
 
     def open_ai_populate_dialog(self):
         """Запускает анализ ИИ: какие из уже сохраненных слов подходят по теме текущей папки."""
@@ -855,7 +864,6 @@ class MainApp(DictionaryUI):
                     audio_manager.delete_audio(french_word)
                     self.load_saved_data()
                     self.details_panel.clear()
-                    self.rules_buttons_container.hide()
                     self.current_word = ""
                     self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
                 else:
@@ -893,7 +901,6 @@ class MainApp(DictionaryUI):
                 
                 if hasattr(self, 'details_panel'):
                     self.details_panel.clear()
-                    self.rules_buttons_container.hide()
                     self.current_word = ""
                     
                 self.statusBar().showMessage(f"Слово '{french_word}' успешно удалено.")
@@ -944,19 +951,22 @@ class MainApp(DictionaryUI):
         self.start_translation()
 
     def on_translation_success(self, result):
-        """Срабатывает, когда API успешно вернул данные слова."""
-        fr_word, transcription, ru_word, examples = result
+        """Срабатывает, когда перевод/поиск слова завершился успешно."""
+        fr_word, transcription, ru_word, examples, examples_pending = result
 
         # Если сейчас открыта конкретная папка, новое слово сразу помещается в нее
         target_folders = [self.active_folder] if self.active_folder else None
-        is_saved = database.save_word(fr_word, transcription, ru_word, examples, folders=target_folders)
-        
+        is_saved = database.save_word(
+            fr_word, transcription, ru_word, examples,
+            folders=target_folders, examples_pending=examples_pending
+        )
+
         if is_saved:
             audio_btn, delete_btn, folder_btn = self.add_row(fr_word, transcription, ru_word)
             audio_btn.clicked.connect(lambda checked, w=fr_word: self.play_word_audio(w))
             delete_btn.clicked.connect(self.on_delete_button_clicked)
             folder_btn.clicked.connect(self.on_folder_button_clicked)
-            self.render_details_html(fr_word, transcription, ru_word, examples)
+            self.render_details_html(fr_word, transcription, ru_word, examples, examples_pending)
             audio_manager.get_audio_path(fr_word)
         else:
             QMessageBox.information(self, "Внимание", f"Слово '{fr_word}' уже есть в вашем словаре!")
@@ -984,8 +994,6 @@ class MainApp(DictionaryUI):
 
     def show_word_details(self, item):
         """Находит кликнутое слово в базе данных и выводит детальную карточку."""
-        self.rules_buttons_container.hide()
-
         row = item.row()
         french_word = self.table.item(row, 0).text()
         
@@ -997,10 +1005,11 @@ class MainApp(DictionaryUI):
                 target_word.get("french", ""),
                 target_word.get("transcription", ""),
                 target_word.get("russian", ""),
-                target_word.get("examples", [])
+                target_word.get("examples", []),
+                target_word.get("examples_pending", False)
             )
 
-    def render_details_html(self, word, transcription, translation, examples):
+    def render_details_html(self, word, transcription, translation, examples, examples_pending=False):
         """Генерирует HTML-разметку для боковой панели описания слова."""
         self.current_word = word
 
@@ -1028,6 +1037,8 @@ class MainApp(DictionaryUI):
                 </li>
                 """
             html += '</ul>'
+        elif examples_pending:
+            html += '<p style="color: #e67e22; font-style: italic;">Примеры появятся автоматически, когда будет доступен интернет.</p>'
         else:
             html += '<p style="color: #95a5a6; font-style: italic;">Примеров для этого слова пока нет.</p>'
             
